@@ -1,0 +1,4906 @@
+diff --git a/.idea/.gitignore b/.idea/.gitignore
+new file mode 100644
+index 0000000..73f69e0
+--- /dev/null
++++ b/.idea/.gitignore
+@@ -0,0 +1,8 @@
++# Default ignored files
++/shelf/
++/workspace.xml
++# Datasource local storage ignored files
++/dataSources/
++/dataSources.local.xml
++# Editor-based HTTP Client requests
++/httpRequests/
+diff --git a/.idea/misc.xml b/.idea/misc.xml
+new file mode 100644
+index 0000000..bedf918
+--- /dev/null
++++ b/.idea/misc.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project version="4">
++  <component name="ExternalStorageConfigurationManager" enabled="true" />
++  <component name="MakefileSettings">
++    <option name="linkedExternalProjectsSettings">
++      <MakefileProjectSettings>
++        <option name="externalProjectPath" value="$PROJECT_DIR$" />
++        <option name="version" value="2" />
++      </MakefileProjectSettings>
++    </option>
++  </component>
++  <component name="MakefileWorkspace" PROJECT_DIR="$PROJECT_DIR$" />
++</project>
+\ No newline at end of file
+diff --git a/.idea/vcs.xml b/.idea/vcs.xml
+new file mode 100644
+index 0000000..94a25f7
+--- /dev/null
++++ b/.idea/vcs.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project version="4">
++  <component name="VcsDirectoryMappings">
++    <mapping directory="$PROJECT_DIR$" vcs="Git" />
++  </component>
++</project>
+\ No newline at end of file
+diff --git a/.idea/xv6-riscv.iml b/.idea/xv6-riscv.iml
+new file mode 100644
+index 0000000..771e54c
+--- /dev/null
++++ b/.idea/xv6-riscv.iml
+@@ -0,0 +1,2 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<module classpath="External" type="CPP_MODULE" version="4" />
+\ No newline at end of file
+diff --git a/Makefile b/Makefile
+index 328f9c6..3041712 100644
+--- a/Makefile
++++ b/Makefile
+@@ -87,7 +87,7 @@ $U/initcode: $U/initcode.S
+ tags: $(OBJS) _init
+ 	etags *.S *.c
+ 
+-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
++ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/Csemaphore.o
+ 
+ _%: %.o $(ULIB)
+ 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+@@ -132,6 +132,9 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
++	$U/_tomer\
++	$U/_Csemaphore\
++	$U/_usertests_threads\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+diff --git a/kernel/backup.c b/kernel/backup.c
+new file mode 100644
+index 0000000..2453638
+--- /dev/null
++++ b/kernel/backup.c
+@@ -0,0 +1,42 @@
++ printf("Pending signal\n");
++  if(p->Sigactions[signum].sa_handler==(void*)SIG_IGN)
++  {
++    //Ignore
++    return;
++  }
++  printf("Q\n");
++  if(p->Sigactions[signum].sa_handler==(void*)SIG_DFL)
++  {
++    defaultHandlerForSignal(p, signum);
++  }
++  printf("w\n");
++  if(p->Sigactions[signum].sa_handler==(void*)SIGKILL)
++  {
++    killprocess(p);
++  }
++  printf("e\n");
++  if(p->Sigactions[signum].sa_handler==(void*)SIGSTOP)
++  {
++    stopprocess(p);
++  }
++  printf("r\n");
++  if(p->Sigactions[signum].sa_handler==(void*)SIGCONT)
++  {
++    contprocess(p);
++  }
++  //else{
++    //Set mask from handler
++    printf("A\n");
++    uint prevMask=p->SignalMask;
++    printf("B\n");
++    struct sigaction* action=&(p->Sigactions[signum]);
++    printf("C\n");
++    uint tempMask=action->sigmask;
++    printf("D\n");
++    p->SignalMask=tempMask;
++    printf("E\n");
++    handldeUserHandler(p, signum);
++    p->SignalMask=prevMask;
++  //}
++
++  p->PendingSignals = p->PendingSignals^(1<<signum);
+\ No newline at end of file
+diff --git a/kernel/defs.h b/kernel/defs.h
+index 41098f4..79c3e77 100644
+--- a/kernel/defs.h
++++ b/kernel/defs.h
+@@ -8,6 +8,10 @@ struct spinlock;
+ struct sleeplock;
+ struct stat;
+ struct superblock;
++struct sigaction;
++struct thread;
++struct semaphore;
++
+ 
+ // bio.c
+ void            binit(void);
+@@ -89,7 +93,7 @@ int             growproc(int);
+ void            proc_mapstacks(pagetable_t);
+ pagetable_t     proc_pagetable(struct proc *);
+ void            proc_freepagetable(pagetable_t, uint64);
+-int             kill(int);
++int             kill(int, int);
+ struct cpu*     mycpu(void);
+ struct cpu*     getmycpu(void);
+ struct proc*    myproc();
+@@ -105,6 +109,35 @@ void            yield(void);
+ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
+ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
+ void            procdump(void);
++void            killThread(struct thread *, int);
++struct thread*  mythread(void);
++int             kthread_create(void (*)(),void *);
++int             kthread_id(void);
++void            kthread_exit(int );
++int             kthread_join(int ,int*);
++void            freethread(struct thread *);
++int             thread_is_in_process(int);
++void            threadExitNotLast(int);
++void            threadExitLast(int);
++
++
++int allocBsem();
++void bsem_free(int);
++void bsem_down(int);
++void bsem_up(int);
++
++
++uint            sigprocmask(uint);
++int             sigaction(int, struct sigaction*, struct sigaction*);
++void            sigret(void);
++void            checkSignalsForProcess(struct proc *);
++void            checkIfStopped(struct proc *);
++void            handlePendingSignal(struct proc *, int );
++void            defaultHandlerForSignal(struct proc *, int );
++void            killprocess(struct proc* );
++void            contprocess(struct proc*);
++void            stopprocess(struct proc* );
++void            handldeUserHandler(struct proc *, int );
+ 
+ // swtch.S
+ void            swtch(struct context*, struct context*);
+diff --git a/kernel/exec.c b/kernel/exec.c
+index 0e8762f..d9f8553 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -8,10 +8,11 @@
+ #include "elf.h"
+ 
+ static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
+-
++struct sigaction defaultSigActionExec;
+ int
+ exec(char *path, char **argv)
+ {
++  //printf("exec\n");
+   char *s, *last;
+   int i, off;
+   uint64 argc, sz = 0, sp, ustack[MAXARG+1], stackbase;
+@@ -100,7 +101,7 @@ exec(char *path, char **argv)
+   // arguments to user main(argc, argv)
+   // argc is returned via the system call return
+   // value, which goes in a0.
+-  p->trapframe->a1 = sp;
++  p->headThreadTrapframe->a1 = sp;
+ 
+   // Save program name for debugging.
+   for(last=s=path; *s; s++)
+@@ -112,10 +113,45 @@ exec(char *path, char **argv)
+   oldpagetable = p->pagetable;
+   p->pagetable = pagetable;
+   p->sz = sz;
+-  p->trapframe->epc = elf.entry;  // initial program counter = main
+-  p->trapframe->sp = sp; // initial stack pointer
++  p->headThreadTrapframe->epc = elf.entry;  // initial program counter = main
++  p->headThreadTrapframe->sp = sp; // initial stack pointer
+   proc_freepagetable(oldpagetable, oldsz);
+ 
++
++  for (int i = 0; i < 32; i++)
++  {
++    if(p->IsSigactionPointer[i])
++    {
++      //the handler is pointer
++      struct sigaction* ptr=(struct sigaction*)p->SignalHandlers[i];
++      if(ptr->sa_handler==(void*)SIG_DFL || ptr->sa_handler==(void*)SIG_IGN)
++      {
++        //do nothing
++      }
++      else
++      {
++        ptr->sa_handler=SIG_DFL;
++        p->IsSigactionPointer[i]=0;
++        p->Sigactions[i].sa_handler=SIG_DFL;
++        p->Sigactions[i].sigmask=0;
++      }
++    }
++    else
++    {
++      if(p->Sigactions[i].sa_handler==(void*)SIG_DFL || p->Sigactions[i].sa_handler==(void*)SIG_IGN)
++      {
++        //do nothing
++      }
++      else
++      {
++        p->IsSigactionPointer[i]=0;
++        p->Sigactions[i].sa_handler=SIG_DFL;
++        p->Sigactions[i].sigmask=0;
++      }
++    }
++  }
++  
++  //printf("finish exec\n");
+   return argc; // this ends up in a0, the first argument to main(argc, argv)
+ 
+  bad:
+diff --git a/kernel/fs.c b/kernel/fs.c
+index 40c9bd4..69eb4cb 100644
+--- a/kernel/fs.c
++++ b/kernel/fs.c
+@@ -40,10 +40,12 @@ readsb(int dev, struct superblock *sb)
+ // Init fs
+ void
+ fsinit(int dev) {
++  
+   readsb(dev, &sb);
+   if(sb.magic != FSMAGIC)
+     panic("invalid file system");
+   initlog(dev, &sb);
++  
+ }
+ 
+ // Zero a block.
+diff --git a/kernel/kalloc.c b/kernel/kalloc.c
+index fa6a0ac..aa85570 100644
+--- a/kernel/kalloc.c
++++ b/kernel/kalloc.c
+@@ -48,8 +48,14 @@ kfree(void *pa)
+ {
+   struct run *r;
+ 
+-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+-    panic("kfree");
++  if(((uint64)pa % PGSIZE) != 0)
++    panic("kfree1");
++
++  if((char*)pa < end )
++    panic("kfree2");
++
++  if((uint64)pa >= PHYSTOP)
++    panic("kfree3");
+ 
+   // Fill with junk to catch dangling refs.
+   memset(pa, 1, PGSIZE);
+diff --git a/kernel/main.c b/kernel/main.c
+index 5d7ad49..b6fab3e 100644
+--- a/kernel/main.c
++++ b/kernel/main.c
+@@ -20,6 +20,7 @@ main()
+     kvminit();       // create kernel page table
+     kvminithart();   // turn on paging
+     procinit();      // process table
++
+     trapinit();      // trap vectors
+     trapinithart();  // install kernel trap vector
+     plicinit();      // set up interrupt controller
+@@ -28,7 +29,9 @@ main()
+     iinit();         // inode cache
+     fileinit();      // file table
+     virtio_disk_init(); // emulated hard disk
++    
+     userinit();      // first user process
++    
+     __sync_synchronize();
+     started = 1;
+   } else {
+@@ -40,6 +43,6 @@ main()
+     trapinithart();   // install kernel trap vector
+     plicinithart();   // ask PLIC for device interrupts
+   }
+-
++  //printf("After user init\n");
+   scheduler();        
+ }
+diff --git a/kernel/param.h b/kernel/param.h
+index b5fdcb2..c5066d3 100644
+--- a/kernel/param.h
++++ b/kernel/param.h
+@@ -11,3 +11,14 @@
+ #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
+ #define FSSIZE       1000  // size of file system in blocks
+ #define MAXPATH      128   // maximum file path name
++#define NTHREADS     8
++#define MAX_STACK_SIZE     4096
++#define MAX_BSEM     128
++
++//Signals
++#define SIG_DFL     0 //Default signal handling
++#define SIG_IGN     1 //Ignore the signal
++#define SIGKILL     9
++#define SIGSTOP     17
++#define SIGCONT     19
++
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 22e7ce4..8cf9b4d 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -18,7 +18,14 @@ struct spinlock pid_lock;
+ extern void forkret(void);
+ static void freeproc(struct proc *p);
+ 
+-extern char trampoline[]; // trampoline.S
++extern char trampoline[],uservec[], userret[], myfunc[], endMyFunc[];
++
++
++struct semaphore semaphores[MAX_BSEM];
++int isSemaphoresAllocated=0;
++struct spinlock semaphores_lock;
++int currentSemaphore=0;
++
+ 
+ // helps ensure that wakeups of wait()ing
+ // parents are not lost. helps obey the
+@@ -42,17 +49,55 @@ proc_mapstacks(pagetable_t kpgtbl) {
+   }
+ }
+ 
++
++int isStillRunning(struct thread *t)
++{
++  if(!t->killed && (t->state==USED || t->state==SLEEPING || t->state==RUNNABLE))
++  {
++    return 1;
++  }
++  return 0;
++}
++
++int checkIfLastThread()
++{
++  int isLast=1;
++  struct thread *tToCheck;
++  struct proc *p = myproc();
++  struct thread *myT=mythread();
++  //printf("---------------\n");
++  for(tToCheck=p->threads; tToCheck<&p->threads[NTHREADS];tToCheck++)
++  {
++    //printf("pid: %d, tid: %d, idx: %d, status: %d\n",p->pid,tToCheck->tid, tToCheck->idx,tToCheck->state);
++    if(tToCheck->tid!=myT->tid && isStillRunning(tToCheck))
++    {
++        isLast=0;
++    }
++  }
++  //printf("---------------\n");
++  return isLast;
++}
++
++
++
+ // initialize the proc table at boot time.
+ void
+ procinit(void)
+ {
+   struct proc *p;
++  struct thread *t;
+   
+   initlock(&pid_lock, "nextpid");
+   initlock(&wait_lock, "wait_lock");
+   for(p = proc; p < &proc[NPROC]; p++) {
+       initlock(&p->lock, "proc");
+-      p->kstack = KSTACK((int) (p - proc));
++      for(t=p->threads;t<&p->threads[NTHREADS];t++)
++      {
++        initlock(&t->tlock,"tlock");
++      }
++      initlock(&p->tid_lock, "proc->tid_lock");
++      initlock(&p->join_lock,"proc->join_lock");
++      p->threads[0].kstack= KSTACK((int) (p - proc));
+   }
+ }
+ 
+@@ -75,6 +120,15 @@ mycpu(void) {
+   return c;
+ }
+ 
++struct thread*
++mythread(void) {
++  push_off();
++  struct cpu *c = mycpu();
++  struct thread *t = c->thread;
++  pop_off();
++  return t;
++}
++
+ // Return the current struct proc *, or zero if none.
+ struct proc*
+ myproc(void) {
+@@ -93,10 +147,19 @@ allocpid() {
+   pid = nextpid;
+   nextpid = nextpid + 1;
+   release(&pid_lock);
+-
+   return pid;
+ }
+ 
++int
++alloctid(struct proc *p) {
++  int tid;
++  acquire(&p->tid_lock);
++  tid = p->nexttid;
++  p->nexttid+= 1;
++  release(&p->tid_lock);
++  return tid;
++}
++
+ // Look in the process table for an UNUSED proc.
+ // If found, initialize state required to run in the kernel,
+ // and return with p->lock held.
+@@ -108,9 +171,10 @@ allocproc(void)
+ 
+   for(p = proc; p < &proc[NPROC]; p++) {
+     acquire(&p->lock);
+-    if(p->state == UNUSED) {
++    if(p->state == p_UNUSED) {
+       goto found;
+-    } else {
++    }     
++    else {
+       release(&p->lock);
+     }
+   }
+@@ -118,16 +182,20 @@ allocproc(void)
+ 
+ found:
+   p->pid = allocpid();
+-  p->state = USED;
++  p->state = p_USED;
++  p->nexttid=1;
++  
+ 
+   // Allocate a trapframe page.
+-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
++//  printf("Allocate a trapframe page.\n");
++  if((p->headThreadTrapframe = (struct trapframe *)kalloc()) == 0){
+     freeproc(p);
+     release(&p->lock);
+     return 0;
+   }
+ 
+-  // An empty user page table.
++  //printf("trapframe address: %p\n",p->headThreadTrapframe);
++
+   p->pagetable = proc_pagetable(p);
+   if(p->pagetable == 0){
+     freeproc(p);
+@@ -135,11 +203,59 @@ found:
+     return 0;
+   }
+ 
++//  printf("Set all threads.\n");
++  struct thread *t;
++  int currThreadIdx=0;
++
++  //printf("---- process %d ------ \n",p->pid);
++  //printf("process trapframe: %p\n",p->headThreadTrapframe);
++  
++  for ( t = p->threads; t < &p->threads[NTHREADS]; t++)
++  {
++    acquire(&t->tlock);
++    t->tid=alloctid(p);
++    t->HasParent=0;
++    t->parentThread=0;
++    t->idx=currThreadIdx;
++    currThreadIdx+=1;
++    t->chan=0;
++    t->killed=0;
++    t->state=UNUSED;
++    t->trapeframe=(struct trapframe*)((uint64)(p->headThreadTrapframe)+(uint64)((t->idx)*sizeof(struct trapframe)));
++    //printf("idx*size of struct frame: %d\n",(uint64)((t->idx)*sizeof(struct trapframe)));
++    //printf("tid: %d, idx: %d, trapframe: %p\n",t->tid,t->idx,t->trapeframe);
++    //printf("tid:%d, idx: %d, trapframe: %p\n",t->tid,t->idx,t->trapeframe);
++    memset(&t->context, 0, sizeof(t->context));
++    t->context.sp = t->kstack + PGSIZE; //to change for multi process
++    t->context.ra = (uint64)forkret;
++    release(&t->tlock);
++  }
++  //printf("---- process %d ------ \n",p->pid);
++
++ 
++
++  //Set all threads
++
++  //acquire(&p->threads[0].tlock);
++  //struct thread* firstThread=&p->threads[0];
++
+   // Set up new context to start executing at forkret,
+   // which returns to user space.
+-  memset(&p->context, 0, sizeof(p->context));
+-  p->context.ra = (uint64)forkret;
+-  p->context.sp = p->kstack + PGSIZE;
++  // firstThread->context.ra = (uint64)forkret;
++  // firstThread->context.sp = firstThread->kstack + PGSIZE;
++
++
++  //release(&p->threads[0].tlock);
++
++  for (int i = 0; i < 32; i++)
++  {
++    p->IsSigactionPointer[i]=0; //choose from sigactions array
++    p->Sigactions[i].sa_handler=SIG_DFL;
++    p->Sigactions[i].sigmask=0;
++  }
++  p-> SignalMask = 0;
++  p-> PendingSignals = 0; 
++  p->stopped=0;
+ 
+   return p;
+ }
+@@ -150,9 +266,8 @@ found:
+ static void
+ freeproc(struct proc *p)
+ {
+-  if(p->trapframe)
+-    kfree((void*)p->trapframe);
+-  p->trapframe = 0;
++  struct thread *t;
++  
+   if(p->pagetable)
+     proc_freepagetable(p->pagetable, p->sz);
+   p->pagetable = 0;
+@@ -160,10 +275,37 @@ freeproc(struct proc *p)
+   p->pid = 0;
+   p->parent = 0;
+   p->name[0] = 0;
+-  p->chan = 0;
+   p->killed = 0;
+   p->xstate = 0;
+   p->state = UNUSED;
++  
++  
++  //Free threads
++  for (t=p->threads; t < &p->threads[NTHREADS]; t++)
++  {
++    if(t->state!=UNUSED)
++    {
++      acquire(&t->tlock);
++      t->trapeframe = 0;
++      t->chan = 0;
++      // if(t->idx!=0)
++      // {
++      //   //printf("free kstack of pid: %d, tid: %d, idx: %d\n",p->pid,t->tid,t->idx);
++      //   kfree((void *)t->kstack) ;
++      // }
++      //printf("After thread kstack kfree\n");
++      //t->kstack=0;
++      t->killed=0;
++      t->tid=0;
++      memset(&t->context,0,sizeof(t->context));
++      t->state=UNUSED;
++      t->xstate = 0;
++      release(&t->tlock);
++    }
++  }
++  //printf("Before trapframe kfree\n");
++  // if(p->headThreadTrapframe)
++  //     kfree((void*)p->headThreadTrapframe);
+ }
+ 
+ // Create a user page table for a given process,
+@@ -190,7 +332,7 @@ proc_pagetable(struct proc *p)
+ 
+   // map the trapframe just below TRAMPOLINE, for trampoline.S.
+   if(mappages(pagetable, TRAPFRAME, PGSIZE,
+-              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
++              (uint64)(p->headThreadTrapframe), PTE_R | PTE_W) < 0){
+     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+     uvmfree(pagetable, 0);
+     return 0;
+@@ -225,6 +367,7 @@ uchar initcode[] = {
+ void
+ userinit(void)
+ {
++  //printf("user init\n");
+   struct proc *p;
+ 
+   p = allocproc();
+@@ -236,13 +379,15 @@ userinit(void)
+   p->sz = PGSIZE;
+ 
+   // prepare for the very first "return" from kernel to user.
+-  p->trapframe->epc = 0;      // user program counter
+-  p->trapframe->sp = PGSIZE;  // user stack pointer
++  //TODO:
++  p->threads[0].trapeframe->epc = 0;      // user program counter
++  p->threads[0].trapeframe->sp = PGSIZE;  // user stack pointer
+ 
+   safestrcpy(p->name, "initcode", sizeof(p->name));
++  safestrcpy(p->threads[0].name, "initcode", sizeof(p->threads[0].name));
+   p->cwd = namei("/");
+ 
+-  p->state = RUNNABLE;
++  p->threads[0].state=RUNNABLE;
+ 
+   release(&p->lock);
+ }
+@@ -255,15 +400,20 @@ growproc(int n)
+   uint sz;
+   struct proc *p = myproc();
+ 
++  acquire(&p->lock);
++
+   sz = p->sz;
+   if(n > 0){
+     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
++      release(&p->lock);
+       return -1;
+     }
+   } else if(n < 0){
+     sz = uvmdealloc(p->pagetable, sz, sz + n);
+   }
+   p->sz = sz;
++
++  release(&p->lock);
+   return 0;
+ }
+ 
+@@ -272,15 +422,17 @@ growproc(int n)
+ int
+ fork(void)
+ {
++  //printf("Calling fork\n");
+   int i, pid;
+   struct proc *np;
+   struct proc *p = myproc();
++  struct thread *t=mythread();
+ 
+   // Allocate process.
+   if((np = allocproc()) == 0){
+     return -1;
+   }
+-
++  //printf("New procees %d\n",np->pid);
+   // Copy user memory from parent to child.
+   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+     freeproc(np);
+@@ -289,11 +441,23 @@ fork(void)
+   }
+   np->sz = p->sz;
+ 
++  
+   // copy saved user registers.
+-  *(np->trapframe) = *(p->trapframe);
++  acquire(&t->tlock);
++  *(np->threads[0].trapeframe) = *(t->trapeframe);
++  release(&t->tlock);
++
++  //copy parent's signals to child
++  np->SignalMask = p->SignalMask;
++  for (int i = 0; i < 32; i++)
++  {
++    np->Sigactions[i]=p->Sigactions[i];
++    np->SignalHandlers[i]=p->SignalHandlers[i];
++    np->IsSigactionPointer[i]=p->IsSigactionPointer[i];
++  }
+ 
+   // Cause fork to return 0 in the child.
+-  np->trapframe->a0 = 0;
++  np->threads[0].trapeframe->a0 = 0;
+ 
+   // increment reference counts on open file descriptors.
+   for(i = 0; i < NOFILE; i++)
+@@ -312,9 +476,11 @@ fork(void)
+   release(&wait_lock);
+ 
+   acquire(&np->lock);
+-  np->state = RUNNABLE;
++  acquire(&np->threads[0].tlock);
++  np->threads[0].state = RUNNABLE;
++  release(&np->threads[0].tlock);
+   release(&np->lock);
+-
++  //printf("Finish fork\n");
+   return pid;
+ }
+ 
+@@ -333,17 +499,531 @@ reparent(struct proc *p)
+   }
+ }
+ 
++int
++kthread_create(void (*start_func)(),void *stack)
++{
++  
++  struct proc *p=myproc();
++  struct thread *t;
++  struct thread *myT=mythread();
++  int countThreadIdx=0;
++  int retTid;
++
++  //printf("start_func: %p\n",start_func);
++  acquire(&p->lock);
++
++  for(t = p->threads; t < &p->threads[NTHREADS]; t++) {
++    //printf("pid %d, tid %d, idx: %d, state: %d\n",p->pid,t->tid,t->idx, t->state);
++    if(t->tid!=mythread()->tid)
++    {
++      //printf("before fist tlock acquire\n");
++      acquire(&t->tlock);
++      //printf("after first tlock acquire\n");
++      if(t->state == UNUSED) {
++        goto foundForThread;
++      }else if(t->state==ZOMBIE) 
++      {
++        freethread(t);
++        goto foundForThread;
++      }
++      else {
++        release(&t->tlock);
++        countThreadIdx+=1;
++      }
++    }
++  }
++  release(&p->lock);
++  return -1;
++
++foundForThread:
++
++    release(&p->lock);
++    retTid=alloctid(p);
++    t->tid=retTid;
++    //printf("allocating new thread: pid: %d, tid: %d, idx: %d\n",p->pid,t->tid, t->idx);
++    t->chan=0;
++    t->killed=0;
++    t->HasParent=0;
++    t->parentThread=0;
++    t->state=RUNNABLE;
++    memset(&t->context, 0, sizeof(t->context));
++    t->kstack=(uint64)kalloc();
++    //printf("pid: %d, tid: %d, idx: %d, kstack: %p\n",p->pid,t->tid,t->idx,t->kstack);
++    t->context.sp = t->kstack + PGSIZE-16; //to change for multi process
++    //like sigret
++    t->context.ra = (uint64)forkret;
++
++    acquire(&myT->tlock);
++    *(t->trapeframe)=*(myT->trapeframe);
++    release(&myT->tlock);
++    //printf("new thread trapframe: %p\n", t->trapeframe);
++    //printf("new thread kstack: %p\n", t->kstack);
++    //printf("size of trapframe: %d\n",sizeof(struct trapframe));
++    t->trapeframe->epc=(uint64)start_func;
++    t->trapeframe->sp=(uint64) (stack+MAX_STACK_SIZE-16);
++    
++    
++    
++    release(&t->tlock);
++    //printf("finish allocating new thread\n");
++    //printf("kthread create\n");
++    return retTid;
++}
++
++
++
++int waitForThreadToEnd(struct thread *t)
++{
++  struct thread *myT=mythread();
++  struct proc *p=myproc();
++
++  for (;;)
++  {
++    if(t->state==ZOMBIE)
++    {
++      
++      
++      release(&p->join_lock);
++      //printf("wait for thread to end\n");
++      if(checkIfLastThread(t))
++      {
++        release(&p->lock);
++        threadExitLast(t->xstate);
++      }
++      else
++      {
++        threadExitNotLast(t->xstate);
++      }
++      
++    }
++    if(t->state==UNUSED)
++    {
++      release(&p->lock);
++      release(&p->join_lock);
++      return 1;
++      
++    }
++    if(myT->killed)
++    {
++      release(&p->lock);
++      release(&p->join_lock);
++      return -1;
++    }
++
++    release(&p->lock);
++    sleep(t,&p->join_lock);
++    acquire(&p->lock);
++  }
++}
++
++
++int
++kthread_join(int thread_id, int* status){
++  //printf("join for tid: %d\n",thread_id);
++  struct proc *p=myproc();
++  struct thread *t;
++
++  acquire(&p->join_lock);
++  acquire(&p->lock);
++  
++  for (t=p->threads; t < & p->threads[NTHREADS]; t++)
++  {
++    if(t->tid == thread_id)
++    {
++      
++      int returnVal=waitForThreadToEnd(t);
++      if(returnVal<0)
++      {
++        return returnVal;
++      }
++      if(status!=(int *)-1)
++      {
++        copyout(p->pagetable, (uint64) status, (char *)&t->xstate,
++                                    sizeof(int));
++      }
++      return t->xstate;
++    }
++  }
++
++  release(&p->lock);
++  release(&p->join_lock);
++  return -1;
++}
++
++
++
++
++
++// int
++// kthread_join2(int thread_id, int* status){
++//   int tid;
++//   struct proc *p = myproc();
++//   //struct thread *t = mythread();
++//   struct thread *nt;
++
++//   acquire(&wait_lock);
++
++//   for(;;){
++//     for (nt = p->threads; nt < &p->threads[NTHREADS]; nt++){
++//       if(nt->tid == thread_id){
++//         // make sure the thread isn't still in exit() or swtch().
++//         acquire(&nt->tlock);
++
++//         if(nt->state == ZOMBIE){
++//           tid = nt->tid;
++
++//           if(status != 0 && copyout(p->pagetable, (uint64)status, (char *)&nt->xstate,
++//                                   sizeof(nt->xstate)) < 0) {
++//             release(&nt->tlock);
++//             release(&wait_lock);
++//             return -1;
++//           }
++//           freethread(nt); 
++//           release(&nt->tlock);
++//           release(&wait_lock);
++//           return tid;
++//         }
++//         release(&nt->tlock);
++//         // Wait for the other thread to exit.
++//         sleep(nt, &wait_lock);  //DOC: wait-sleep
++//       }
++//     }
++//   }
++
++
++
++void freethread(struct thread *t){
++  if(t->state!=UNUSED)
++      {
++        //acquire(&t->tlock);
++        t->trapeframe = 0;
++        t->chan = 0;
++        t->killed=0;
++        t->tid=0;
++        memset(&t->context,0,sizeof(t->context));
++        t->state=UNUSED;
++        t->xstate = 0;
++        //release(&t->tlock);
++      }
++      // if(p->headThreadTrapframe)
++      //   kfree((void*)p->headThreadTrapframe);
++}
++
++int thread_is_in_process(int thread_id){
++  struct proc *p = myproc();
++  struct thread *t;
++  for (t = p->threads; t < &p->threads[NTHREADS]; t++){
++    if(t->tid == thread_id){
++      return 1;
++    }
++  }
++  return 0;
++}
++
++
++void threadExitLast(int status)
++{
++  //printf("thread exit last\n");
++  struct proc *p=myproc();
++  struct thread *myT=mythread();
++  
++  
++  for(int fd = 0; fd < NOFILE; fd++){
++    if(p->ofile[fd]){
++      struct file *f = p->ofile[fd];
++      fileclose(f);
++      p->ofile[fd] = 0;
++    }
++  }
++  begin_op();
++  iput(p->cwd);
++  end_op();
++  p->cwd = 0;
++
++  acquire(&wait_lock);
++
++  // Give any children to init.
++  reparent(p);
++
++  // Parent might be sleeping in wait().
++  wakeup(p->parent);
++  acquire(&p->lock);
++  acquire(&myT->tlock);
++
++  p->xstate = status;
++  p->state = p_ZOMBIE;
++  myT->killed=1;
++  myT->xstate = status;
++  
++  myT->state=ZOMBIE;
++  //printf("Before exit wakeup\n");
++  wakeup(myT);
++  //wakeup(&wait_lock);
++  release(&p->lock);
++  release(&wait_lock);
++  
++
++  //printf("Before exit sched\n");
++  // Jump into the scheduler, never to return.
++  
++  sched();
++  panic("zombie exit");
++}
++
++void threadExitNotLast(int status)
++{
++  //printf("thread exit not last: pid: %d, tid: %d\n",myproc()->pid,mythread()->tid);
++  struct thread *t=mythread();
++  acquire(&t->tlock);
++  t->killed=1;
++  t->xstate = status;
++  t->state=ZOMBIE;
++  wakeup(t);
++  wakeup(&myproc()->join_lock);
++  release(&myproc()->lock);
++  //printf("sched\n");
++  sched();
++  panic("Kill thread");
++}
++
++void
++kthread_exit(int status)
++{
++  //printf("kthread_exit\n");
++  struct thread *myT=mythread();
++  struct proc *p=myproc();
++  struct thread *t;
++
++  acquire(&p->lock);
++
++  if(myT->killed)
++  {
++    freethread(myT);
++    return;
++  }
++
++  if (checkIfLastThread())
++  {
++    release(&p->lock);
++    threadExitLast(status);
++  }
++  else
++  {
++    //printf("of kthread exit\n");
++    threadExitNotLast(status);
++  }
++  
++
++  //Check if i am the last thread. If not-> kill me (kill the thread)
++  acquire(&p->lock);
++  for (t = p->threads; t < &p->threads[NTHREADS]; t++)
++  {
++    if(t->tid!=myT->tid && t->state!=UNUSED && t->state!=ZOMBIE)
++    {
++//      acquire(&t->tlock);
++      //printf("killing thread: pid: %d, tid: %d, idx: %d\n",myproc()->pid,myT->tid,myT->idx);
++      killThread(myT, status);
++      //release(&t->tlock);
++    }
++    
++  }
++  release(&p->lock);
++  //printf("pid: %d, tid: %d, idx: %d is last surviver\n",p->pid,myT->tid,myT->idx);
++  // printf("kthread exit\n");
++  // If I am the last thread, terminate the process:
++  // Close all open files.
++  for(int fd = 0; fd < NOFILE; fd++){
++    if(p->ofile[fd]){
++      struct file *f = p->ofile[fd];
++      fileclose(f);
++      p->ofile[fd] = 0;
++    }
++  }
++  begin_op();
++  iput(p->cwd);
++  end_op();
++  p->cwd = 0;
++
++  acquire(&wait_lock);
++
++  // Give any children to init.
++  reparent(p);
++
++  // Parent might be sleeping in wait().
++  wakeup(p->parent);
++  
++  acquire(&p->lock);
++  acquire(&myT->tlock);
++
++  p->xstate = status;
++  p->state = p_ZOMBIE;
++  myT->killed=1;
++  myT->xstate = status;
++  myT->state=ZOMBIE;
++  
++  //printf("Before exit wakeup\n");
++  wakeup(myT);
++  //wakeup(&wait_lock);
++  release(&p->lock);
++  release(&wait_lock);
++
++  //printf("Before exit sched\n");
++  // Jump into the scheduler, never to return.
++  
++  sched();
++  panic("zombie exit");
++
++  // //exit(status)
++}
++
++//kill process
++int our_kill(int pid)
++{
++  struct proc *p;
++  struct thread *t;
++
++  for (p = proc; p < &proc[NPROC]; p++)
++  {
++      if(p->pid==pid)
++      {
++        //printf("before acquire\n");
++        acquire(&p->lock);
++        //printf("after acquire\n");
++        p->killed=1;
++        //printf("before release\n");
++        release(&p->lock);
++        //printf("after release\n");
++        for (t = p->threads; t < &p->threads[NTHREADS]; t++)
++        {
++          if(t->tid!=mythread()->tid)
++          {
++              acquire(&t->tlock);
++              t->killed=1;
++              if(t->state==SLEEPING)
++              {
++                t->state=RUNNABLE;
++              }
++              release(&t->tlock);
++          }        
++        }
++        //release(&p->lock);
++        return 0;
++      }
++  }
++  return -1;
++}
++
++
++
++
++
++
++
+ // Exit the current process.  Does not return.
+ // An exited process remains in the zombie state
+ // until its parent calls wait().
+ void
+ exit(int status)
+ {
++  //printf("exit\n");
++
+   struct proc *p = myproc();
++  struct thread *t;
++  struct thread *tToCheck;
++  struct thread *myT=mythread();
++
+ 
+   if(p == initproc)
+     panic("init exiting");
++  //printf("A");
++  //First thread gets here kills all
++  acquire(&p->lock);
++  for(tToCheck=p->threads; tToCheck<&p->threads[NTHREADS];tToCheck++)
++  {
++    if(tToCheck->tid!=myT->tid)
++    {
++      tToCheck->killed=1;
++      if(tToCheck->state==SLEEPING)
++      {
++        tToCheck->state=RUNNABLE;
++      }
++    }
++  }
++//printf("B");
++  for (tToCheck = p->threads; tToCheck <&p->threads[NTHREADS]; tToCheck++)
++  {
++    if(tToCheck->tid != myT->tid && tToCheck->tid!=0)
++    {
++      //printf("joinning thread: tid: %d, idx: %d\n",tToCheck->tid, tToCheck->idx);
++      release(&p->lock);
++      kthread_join(tToCheck->tid,(int *)-1);
++      acquire(&p->lock);
++    }
++  }
++  //printf("C");
++  int isLast=checkIfLastThread();
++  if(isLast)
++  {
++    release(&p->lock);
++    threadExitLast(status);
++    
++  }
++  else
++  {
++   //printf("of exit\n");
++    threadExitNotLast(status);
++  }
++  
++  
++  //if reached here is last
++
++
++
++
++
++
++
++
++
++
++  //each thread enters, check first if it is killed.
++  //If kiiled-> exit the thread
++  //If not killed (alive) continue and kill all threads in the next line
++  
++  if(mythread()->killed)
++  {
++    //printf("Killing thread that is not me: %d\n",myT->tid);
++    kthread_exit(status);
++  }
+ 
++  //printf("mythread not killed yet, kill all threads (our kill)\n");
++  
++  //printf("Before kill other threads\n");
++  our_kill(p->pid);
++
++  //printf("after our kill\n");
++  
++  //printf("After kill other threads\n");
++
++  //acquire process
++  
++  //Again check if there are other threads alive
++  //If yes, kill thread and sched
++  //else continue
++  //printf("Again kill me if I am not last\n");
++  for (t=p->threads; t < &p->threads[NTHREADS]; t++)
++  {
++    if(t->state!=UNUSED && t->state!=ZOMBIE)
++    {
++      if(t->tid!=myT->tid)
++      {
++        killThread(myT, status);
++      }
++    }
++  }
++  //printf("After again kill me if I am not last\n");
++  
++  
+   // Close all open files.
+   for(int fd = 0; fd < NOFILE; fd++){
+     if(p->ofile[fd]){
+@@ -352,7 +1032,6 @@ exit(int status)
+       p->ofile[fd] = 0;
+     }
+   }
+-
+   begin_op();
+   iput(p->cwd);
+   end_op();
+@@ -367,26 +1046,76 @@ exit(int status)
+   wakeup(p->parent);
+   
+   acquire(&p->lock);
++  acquire(&myT->tlock);
+ 
+   p->xstate = status;
+-  p->state = ZOMBIE;
+-
++  p->state = p_ZOMBIE;
++  myT->killed=1;
++  myT->xstate = status;
++  
++  myT->state=ZOMBIE;
++  //printf("Before exit wakeup\n");
++  wakeup(myT);
++  //wakeup(&wait_lock);
++  release(&p->lock);
+   release(&wait_lock);
++  
+ 
++  //printf("Before exit sched\n");
+   // Jump into the scheduler, never to return.
++  
+   sched();
+   panic("zombie exit");
+ }
+ 
++void
++killThread(struct thread *t, int status)
++{
++  //printf("kill thread\n");
++  //printf("tid: %d is exiting\n",t->tid);
++  if(t->state!=UNUSED && t->state!=ZOMBIE)
++  {
++    acquire(&t->tlock);
++    t->killed=1;
++    t->xstate = status;
++    t->state=ZOMBIE;
++    wakeup(t);
++    // if(t->idx!=0)
++    // {
++    //   kfree((void *)t->kstack);
++    // }
++    //wakeup(t);
++    //acquire(&t->tlock);
++    //printf("sched\n");
++    //release(&t->tlock);
++    sched();
++    
++    panic("Kill thread");
++  }
++}
++
++
++int all_threads_killed(void){
++  struct proc *p = myproc();
++  for(int i=0; i<NTHREADS; i++){
++    if(p->threads[i].killed == 0){
++      return 0;
++    }
++  }
++  return 1;
++}
++
+ // Wait for a child process to exit and return its pid.
+ // Return -1 if this process has no children.
+ int
+ wait(uint64 addr)
+ {
++  
+   struct proc *np;
+   int havekids, pid;
+   struct proc *p = myproc();
+ 
++
+   acquire(&wait_lock);
+ 
+   for(;;){
+@@ -398,15 +1127,17 @@ wait(uint64 addr)
+         acquire(&np->lock);
+ 
+         havekids = 1;
+-        if(np->state == ZOMBIE){
++        if(np->state == p_ZOMBIE){
+           // Found one.
+           pid = np->pid;
++
+           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
+                                   sizeof(np->xstate)) < 0) {
+             release(&np->lock);
+             release(&wait_lock);
+             return -1;
+           }
++          //for on threads
+           freeproc(np);
+           release(&np->lock);
+           release(&wait_lock);
+@@ -417,7 +1148,7 @@ wait(uint64 addr)
+     }
+ 
+     // No point waiting if we don't have any children.
+-    if(!havekids || p->killed){
++    if(!havekids || all_threads_killed()){
+       release(&wait_lock);
+       return -1;
+     }
+@@ -427,6 +1158,8 @@ wait(uint64 addr)
+   }
+ }
+ 
++
++
+ // Per-CPU process scheduler.
+ // Each CPU calls scheduler() after setting itself up.
+ // Scheduler never returns.  It loops, doing:
+@@ -438,32 +1171,214 @@ void
+ scheduler(void)
+ {
+   struct proc *p;
++  struct thread *t;
++  //int foundThread
++  
+   struct cpu *c = mycpu();
+   
+   c->proc = 0;
++  c->thread=0;
+   for(;;){
+     // Avoid deadlock by ensuring that devices can interrupt.
+     intr_on();
+ 
+     for(p = proc; p < &proc[NPROC]; p++) {
+-      acquire(&p->lock);
+-      if(p->state == RUNNABLE) {
+-        // Switch to chosen process.  It is the process's job
+-        // to release its lock and then reacquire it
+-        // before jumping back to us.
+-        p->state = RUNNING;
+-        c->proc = p;
+-        swtch(&c->context, &p->context);
+-
+-        // Process is done running for now.
+-        // It should have changed its p->state before coming back.
+-        c->proc = 0;
++      // printf("scheduler\n");
++      // if(p->pid==3)
++      // {
++      //   printf("process 3 in state: %d\n",p->state);
++      // }
++      //acquire(&p->lock);
++      
++      if(p->state == p_USED) {
++        for (t = p->threads; t < &p->threads[NTHREADS]; t++)
++        {
++          
++          acquire(&t->tlock);
++          
++          if(t->state==RUNNABLE)
++          {
++            
++            //printf("cpu %d running process %d and thread %d\n",cpuid(),p->pid,t->tid);
++            //printf("process: %d, thread: %d are running\n",p->pid,t->tid);
++            t->state = RUNNING;
++            c->proc = p;
++            c->thread=t;
++            //release(&p->lock);
++            //release(&t->tlock);
++            swtch(&c->context, &t->context);
++            //printf("back swtch\n");
++            //acquire(&p->lock);
++
++            // Process is done running for now.
++            // It should have changed its p->state before coming back.
++            c->proc = 0;
++            c->thread=0;
++          }
++
++          release(&t->tlock);
++        }
++        
+       }
+-      release(&p->lock);
++      //release(&p->lock);
+     }
+   }
+ }
+ 
++
++///
++
++void
++checkSignalsForProcess(struct proc *p)
++{
++    checkIfStopped(p);
++    if(!p->stopped)
++    {
++      for (int i = 0; i <= 31; i++)
++      {
++        
++        if(!(p->SignalMask & (1<<i)))
++        {
++          if(p->PendingSignals & (1<<i))
++          {
++              handlePendingSignal(p,i);
++          }
++        }
++      }
++    }
++  //}
++}
++
++
++
++void
++checkIfStopped(struct proc *p)
++{
++  while(p->stopped)
++  {
++    if(p->PendingSignals & (1<<SIGCONT))
++    {
++      if(p->Sigactions[SIGCONT].sa_handler==SIG_DFL)
++      {
++        contprocess(p);
++        return;
++      }
++      else
++      {
++        yield();
++      }
++    }
++    else
++    {
++      yield();
++    }
++    
++  }
++  
++}
++
++void
++handlePendingSignal(struct proc *p, int signum)
++{
++  p->TempMask=p->SignalMask;
++  struct sigaction* action=&(p->Sigactions[signum]);
++  p->SignalMask=action->sigmask;
++
++  if(p->Sigactions[signum].sa_handler==(void*)SIG_IGN)
++  {
++    //Ignore
++    return;
++  }
++  else{
++    if(p->Sigactions[signum].sa_handler==(void*)SIG_DFL)
++    {
++      defaultHandlerForSignal(p, signum);
++    }
++    else
++    {
++      if(p->Sigactions[signum].sa_handler==(void*)SIGKILL)
++      {
++        killprocess(p);
++      }
++      else
++      {
++        if(p->Sigactions[signum].sa_handler==(void*)SIGSTOP)
++        {
++          stopprocess(p);
++        }
++        else
++        {
++          if(p->Sigactions[signum].sa_handler==(void*)SIGCONT)
++          {
++            contprocess(p);
++          }
++          else{     
++            handldeUserHandler(p, signum);
++          }
++        }
++      }
++    }
++  
++  }
++  p->PendingSignals = p->PendingSignals^(1<<signum);
++}
++
++void
++defaultHandlerForSignal(struct proc *p, int signum)
++{
++  if(signum==SIGSTOP)
++  {
++    stopprocess(p);
++  }
++  else if(signum==SIGCONT)
++  {
++    contprocess(p);
++  }
++  else if (signum==SIGKILL)
++  {
++    killprocess(p);
++  }
++  else
++  {
++    killprocess(p);
++  }
++}
++
++void handldeUserHandler(struct proc *p, int signum)
++{
++  struct thread *t= mythread();
++  //Backup the trapefram
++  memmove(&(p->UserTrapFrameBackup),t->trapeframe,sizeof(struct trapframe));
++  
++  //Static array holding the hex code for the following code:
++  //li a7, SYS_sigret
++  //ecall
++  char arr[]={0x93 ,0x08 ,0x80 ,0x01 ,0x73 ,0x00 ,0x00 ,0x00 };
++
++  //Copy the code to the user stack
++  copyout(p->pagetable,t->trapeframe->sp,arr,8);  
++  
++  //Modify the return address to sigret on the stack
++  t->trapeframe->ra=t->trapeframe->sp;
++  struct sigaction* sigPtr=&(p->Sigactions[signum]);
++
++  //Modify stack pointer
++  t->trapeframe->sp-=8;  
++  
++  //Modify the first argument of the use handler function
++  t->trapeframe->a0=signum;
++
++  //Set the address to the user's handler
++  t->trapeframe->epc= (uint64) (sigPtr->sa_handler);
++  
++}
++
++
++void acquireSchedPanic()
++{
++  panic("sched t->lock");
++}
++
+ // Switch to scheduler.  Must hold only p->lock
+ // and have changed proc->state. Saves and restores
+ // intena because intena is a property of this
+@@ -475,19 +1390,24 @@ void
+ sched(void)
+ {
+   int intena;
+-  struct proc *p = myproc();
++  struct thread *t = mythread();
+ 
+-  if(!holding(&p->lock))
+-    panic("sched p->lock");
++  if(!holding(&t->tlock))
++  {
++    acquireSchedPanic();
++  }
+   if(mycpu()->noff != 1)
++  {
++    printf("pid: %d, tid: %d, idx: %d\n", myproc()->pid,t->tid,t->idx);
+     panic("sched locks");
+-  if(p->state == RUNNING)
++  }
++  if(t->state == RUNNING)
+     panic("sched running");
+   if(intr_get())
+     panic("sched interruptible");
+ 
+   intena = mycpu()->intena;
+-  swtch(&p->context, &mycpu()->context);
++  swtch(&t->context, &mycpu()->context);
+   mycpu()->intena = intena;
+ }
+ 
+@@ -495,11 +1415,12 @@ sched(void)
+ void
+ yield(void)
+ {
+-  struct proc *p = myproc();
+-  acquire(&p->lock);
+-  p->state = RUNNABLE;
++//  printf("yield\n");
++  struct thread *t = mythread();
++  acquire(&t->tlock);
++  t->state = RUNNABLE;
+   sched();
+-  release(&p->lock);
++  release(&t->tlock);
+ }
+ 
+ // A fork child's very first scheduling by scheduler()
+@@ -507,19 +1428,17 @@ yield(void)
+ void
+ forkret(void)
+ {
++  //printf("forkret\n");
+   static int first = 1;
+-
+-  // Still holding p->lock from scheduler.
+-  release(&myproc()->lock);
+-
++  release(&mythread()->tlock);
+   if (first) {
++    //printf("first\n");
+     // File system initialization must be run in the context of a
+     // regular process (e.g., because it calls sleep), and thus cannot
+     // be run from main().
+     first = 0;
+     fsinit(ROOTDEV);
+   }
+-
+   usertrapret();
+ }
+ 
+@@ -528,30 +1447,52 @@ forkret(void)
+ void
+ sleep(void *chan, struct spinlock *lk)
+ {
+-  struct proc *p = myproc();
+   
++  //struct proc *p = myproc();
++  struct thread *t=mythread(); 
+   // Must acquire p->lock in order to
+   // change p->state and then call sched.
+   // Once we hold p->lock, we can be
+   // guaranteed that we won't miss any wakeup
+   // (wakeup locks p->lock),
+   // so it's okay to release lk.
++  //acquire(&p->lock);
++  
++  //acquire(&t->tlock);  //DOC: sleeplock1
++  
++  // if(lk!=&t->tlock)
++  // {
++  //   acquire(&t->tlock);
++  //   release(lk);
++  // }
+ 
+-  acquire(&p->lock);  //DOC: sleeplock1
++  acquire(&t->tlock);
+   release(lk);
+-
++  
+   // Go to sleep.
+-  p->chan = chan;
+-  p->state = SLEEPING;
+-
++  t->chan = chan;
++  t->state = SLEEPING;
++  // printf("thread %d is sleeping on chan %d\n", t->tid, t->chan);
++  //printf("sleeping\n");
++  //release(&t->tlock);
++  //printf("sleep sched of tid: %d\n",t->tid);
+   sched();
+ 
+   // Tidy up.
+-  p->chan = 0;
++  t->chan = 0;
+ 
+   // Reacquire original lock.
+-  release(&p->lock);
++  
++  //release(&p->lock);
++  // if(lk!=&t->tlock)
++  // {
++  //   release(&t->tlock);
++  //   acquire(lk);
++  // }
++  
++  release(&t->tlock);
+   acquire(lk);
++  
+ }
+ 
+ // Wake up all processes sleeping on chan.
+@@ -559,16 +1500,29 @@ sleep(void *chan, struct spinlock *lk)
+ void
+ wakeup(void *chan)
+ {
++  // if(myproc()!=0 && mythread()!=0)
++  //   printf("start wakeup: cpu: %d, pid: %d, tid: %d, chan: %d\n",cpuid(),myproc()->pid,mythread()->tid,chan);
+   struct proc *p;
+-
++  struct thread *t;
+   for(p = proc; p < &proc[NPROC]; p++) {
+-    if(p != myproc()){
+-      acquire(&p->lock);
+-      if(p->state == SLEEPING && p->chan == chan) {
+-        p->state = RUNNABLE;
++    //acquire(&p->lock);
++    for (t = p->threads; t < &p->threads[NTHREADS]; t++)
++    {
++      //acquire(&p->lock);
++      if(p->state==p_USED)
++      {
++        if(t!=mythread())
++        {
++          if(t->state == SLEEPING && t->chan == chan) {
++            acquire(&t->tlock);
++            t->state = RUNNABLE;
++            release(&t->tlock);
++          }
++          
++        }
+       }
+-      release(&p->lock);
+     }
++    //release(&p->lock);
+   }
+ }
+ 
+@@ -576,23 +1530,57 @@ wakeup(void *chan)
+ // The victim won't exit until it tries to return
+ // to user space (see usertrap() in trap.c).
+ int
+-kill(int pid)
++kill(int pid, int signum)
+ {
+   struct proc *p;
+-
++  struct thread *t;
++  
++  if(signum<0 || signum>31)
++  {
++    return -1;
++  }
+   for(p = proc; p < &proc[NPROC]; p++){
+     acquire(&p->lock);
+     if(p->pid == pid){
+-      p->killed = 1;
+-      if(p->state == SLEEPING){
+-        // Wake process from sleep().
+-        p->state = RUNNABLE;
++      if(signum==SIGKILL)
++      {
++        p->killed=1;
++        for (t = p->threads; t<&p->threads[NTHREADS]; t++)
++        {
++          acquire(&t->tlock);
++          t->killed=1;
++          release(&t->tlock);
++        }
++        
++      }
++      p->PendingSignals = p->PendingSignals | (1<<signum);
++      for (t = p->threads; t<&p->threads[NTHREADS]; t++)
++      {
++        if(t->state == RUNNABLE){
++          release(&p->lock);
++          return 0;
++        }
++      }
++
++      for (t = p->threads; t<&p->threads[NTHREADS]; t++)
++      {
++        acquire(&t->tlock);
++        if(t->state == SLEEPING){
++        // Wake thread from sleep().
++          t->state = RUNNABLE;
++          release(&t->tlock);
++          release(&p->lock);
++          return 0;
++        }
++        release(&t->tlock);
+       }
+       release(&p->lock);
+-      return 0;
++      //printf("B");
++      return -1;
+     }
+     release(&p->lock);
+   }
++  //printf("C");
+   return -1;
+ }
+ 
+@@ -632,25 +1620,269 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
+ void
+ procdump(void)
+ {
+-  static char *states[] = {
+-  [UNUSED]    "unused",
+-  [SLEEPING]  "sleep ",
+-  [RUNNABLE]  "runble",
+-  [RUNNING]   "run   ",
+-  [ZOMBIE]    "zombie"
+-  };
+-  struct proc *p;
+-  char *state;
++  // static char *pstates[] = {
++  // [p_UNUSED]    "p_unused",
++  // [p_USED]      "p_sleep ",
++  // [p_ZOMBIE]    "p_runble",
++  // };
++
++  // static char *tstates[] = {
++  // [UNUSED]    "unused",
++  // [SLEEPING]  "sleep ",
++  // [RUNNABLE]  "runble",
++  // [RUNNING]   "run   ",
++  // [ZOMBIE]    "zombie"
++  // };
++  // struct proc *p;
++  // char *pstate;
++  // char *tstate;
++
++  // printf("\n");
++
++  // for (p=proc;p<&proc[NPROC]; p++)
++  // {
++  //   if(p->state >= 0 && p->state < NELEM(pstate) )
++  //     pstate = pstates[p->state];
++  //   else
++  //     pstate = "???";
++  //   printf("---process %d-----\n",p->pid);
++  //   printf("%d %s %s", p->pid, pstate, p->name);
++  //   printf("p->sz: %d\n",p->sz);
++  //   printf("p->xstate: %d\n",p->xstate);
++  //   printf("p->head trapframe: %d\n", p->headThreadTrapframe);
++  //   printf("p->killed\n" ,p->killed);
++  //   printf("p->lock state: %d\n",p->lock.locked);
++  //   printf("p->nexttid\n",p->nexttid);
++  //   printf("\n");
++
++  //   // for (size_t i = 0; i < count; i++)
++  //   // {
++  //   //   /* code */
++  //   // }
++    
++  // }
++  
+ 
+-  printf("\n");
+-  for(p = proc; p < &proc[NPROC]; p++){
+-    if(p->state == UNUSED)
+-      continue;
+-    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
+-      state = states[p->state];
+-    else
+-      state = "???";
+-    printf("%d %s %s", p->pid, state, p->name);
+-    printf("\n");
++
++  // for(p = proc; p < &proc[NPROC]; p++){
++  //   if(p->state == p_UNUSED)
++  //     continue;
++  //   if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
++  //     state = states[p->state];
++  //   else
++  //     state = "???";
++  //   printf("%d %s %s", p->pid, state, p->name);
++  //   printf("\n");
++  // }
++}
++
++uint
++sigprocmask(uint mask)
++{
++  struct proc *p = myproc();
++  uint temp = p->SignalMask;
++  if((mask & (1<<SIGSTOP)) || (mask & (1<<SIGKILL)) )
++  {
++    //error
+   }
++  else
++  {
++    p->SignalMask = mask;
++  }
++   
++  return temp;
+ }
++
++
++int sigaction(int signum, struct sigaction* act, struct sigaction* oldact)
++{
++  struct proc *p = myproc();
++  if(signum<0 || signum>32)
++  {
++    return -1;
++  }
++  if(signum==SIGKILL || signum == SIGSTOP)
++  {
++    return -1;
++  }
++  if(oldact!=0)
++  {
++    char* srcptr= (char*) &(p->Sigactions[signum]);
++    copyout(p->pagetable,(uint64)oldact,srcptr,sizeof(struct sigaction));
++  }
++  if(act != 0) //act not null
++  {
++    char* dstptr= (char*) &(p->Sigactions[signum]);
++    struct sigaction tempAction=(p->Sigactions[signum]);
++    copyin(p->pagetable,dstptr,(uint64)act,sizeof(struct sigaction));
++    struct sigaction *actPtr=(struct sigaction *)&(p->Sigactions[signum]);
++    if((actPtr->sigmask & (1 << SIGSTOP)) || (actPtr->sigmask & (1 << SIGKILL)))
++    {
++      *actPtr=tempAction;
++      return -1;
++    }
++  }
++  return 0;
++
++}
++
++void
++sigret(void)
++{
++  struct thread *t= mythread();
++  struct proc *p= myproc();
++  memmove(t->trapeframe,&(p->UserTrapFrameBackup),sizeof(struct trapframe));
++}
++
++void
++stopprocess(struct proc* p)
++{
++  p->stopped=1;
++}
++
++void
++contprocess(struct proc* p)
++{
++  p->stopped=0;
++}
++
++void
++killprocess(struct proc* p)
++{
++  p->killed=1;
++  exit(0);
++}
++
++
++int KillOtherThreads(struct proc *p)
++{
++  struct thread *myT= mythread();
++  struct thread *t;
++  if(myT->killed==1)
++  {
++    return 1;
++  }
++
++  for (t= p->threads; t < &p->threads[NTHREADS]; t++)
++  {
++    if(t->tid!=myT->tid && t->state!=ZOMBIE && t->state != UNUSED)
++    {
++      t->killed=1;
++      if(t->state==SLEEPING)
++      {
++        t->state=RUNNABLE;
++      }
++    }
++  }
++  
++  return 0;
++}
++
++//Bsems
++int allocBsem()
++{
++  int sema_id=-1;
++  int found=0;
++  if(!isSemaphoresAllocated)
++  {
++    //printf("First time allocated\n");
++    initlock(&semaphores_lock,"semaphores_lock");
++    acquire(&semaphores_lock);
++    for (int i = 0; i < MAX_BSEM; i++)
++    {
++      initlock(&semaphores[i].sema_lock,"sema_lock");
++      acquire(&semaphores[i].sema_lock);
++      semaphores[i].available=1;
++      semaphores[i].value=1;
++      release(&semaphores[i].sema_lock);
++      //semaphores[ i].currentProcWaiting=0;
++    }
++    isSemaphoresAllocated=1;
++    release(&semaphores_lock);
++  }
++
++  acquire(&semaphores_lock);
++  for (int i = 0; i < MAX_BSEM && found==0; i++)
++  {
++    acquire(&semaphores[i].sema_lock);
++    if(semaphores[i].available==1)
++    {
++      semaphores[i].available=0;
++      semaphores[i].value=1;
++      found=1;
++      sema_id=i;
++    }
++    
++    release(&semaphores[i].sema_lock);
++  }
++  release(&semaphores_lock);
++  if(found==0)
++  {
++    return -1;
++  }
++  //printf("alloc sema_id: %d, value: %d\n",sema_id,semaphores[sema_id].value);
++  return sema_id;
++}
++
++
++void bsem_free(int bsem)
++{
++  if(bsem>MAX_BSEM)
++  {
++    panic("semaphore id not valid");
++  }
++  if(semaphores[bsem].available==1)
++  {
++    panic("BSEM not allocated");
++  }
++  
++  acquire(&semaphores_lock);
++  semaphores[bsem].available=1;
++  semaphores[bsem].value=1;
++  release(&semaphores_lock);
++  
++}
++
++
++void bsem_down(int bsem)
++{
++  //printf("bdown\n");
++  acquire(&semaphores[bsem].sema_lock);
++  //printf("after bsem %d acquire, value: %d\n",bsem,semaphores[bsem].value);
++  while(semaphores[bsem].value==0)
++  {
++    //printf("pid %d: Go to sleep on %d\n",myproc()->pid,&semaphores[bsem].value);  
++    
++    sleep(&semaphores[bsem].value,&semaphores[bsem].sema_lock);
++    //printf("wakeup\n");
++  }
++  semaphores[bsem].value=0;
++  release(&semaphores[bsem].sema_lock);
++
++
++  // while(semaphores[bsem].value==1)
++  // {
++  //   printf("going to sleep\n");
++  //   acquire(&semaphores_lock);
++  //   sleep(&semaphores[bsem],&semaphores_lock);
++  // }
++  // acquire(&semaphores_lock);
++  // semaphores[bsem].value=1;
++  // release(&semaphores_lock);
++  
++}
++void bsem_up(int bsem)
++{
++  acquire(&semaphores[bsem].sema_lock);
++  if(semaphores[bsem].value==0)
++  {
++    //acquire(&semaphores_lock);
++    semaphores[bsem].value=1;
++    //release(&semaphores_lock);
++    //printf("wakeup on: %d\n",&semaphores[bsem].value);
++    wakeup(&semaphores[bsem].value);
++  }
++  release(&semaphores[bsem].sema_lock);
++}
++
++
+diff --git a/kernel/proc.h b/kernel/proc.h
+index 8e90008..511235e 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -18,9 +18,24 @@ struct context {
+   uint64 s11;
+ };
+ 
++struct sigaction{
++  void (*sa_handler) (int);
++  uint sigmask;
++};
++
++struct semaphore{
++  int available;
++  int value;
++  struct spinlock sema_lock;
++};
++
++
++//typedef struct sigaction sigaction;
++
+ // Per-CPU state.
+ struct cpu {
+   struct proc *proc;          // The process running on this cpu, or null.
++  struct thread *thread;
+   struct context context;     // swtch() here to enter scheduler().
+   int noff;                   // Depth of push_off() nesting.
+   int intena;                 // Were interrupts enabled before push_off()?
+@@ -80,7 +95,26 @@ struct trapframe {
+   /* 280 */ uint64 t6;
+ };
+ 
+-enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
++enum procstate { p_UNUSED, p_USED, p_ZOMBIE };
++enum threadstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
++
++
++struct thread{
++  int tid;
++  int idx;
++  enum threadstate state;
++  int killed;                   // If non-zero, have been killed
++  void *chan;                   // If non-zero, sleeping on chan
++  uint64 kstack;                // Virtual address of kernel stack for thread
++  struct trapframe *trapeframe; // data page for trampoline.S
++  struct context context;       // swtch() here to run process
++  char name[16];                // Thread name
++  struct spinlock tlock;        // Lock thread to modify
++  int xstate;                   // Exit status to be returned to another thread's join
++  struct thread *parentThread;  // Created on join
++  int HasParent;
++};
++
+ 
+ // Per-process state
+ struct proc {
+@@ -88,7 +122,6 @@ struct proc {
+ 
+   // p->lock must be held when using these:
+   enum procstate state;        // Process state
+-  void *chan;                  // If non-zero, sleeping on chan
+   int killed;                  // If non-zero, have been killed
+   int xstate;                  // Exit status to be returned to parent's wait
+   int pid;                     // Process ID
+@@ -97,12 +130,33 @@ struct proc {
+   struct proc *parent;         // Parent process
+ 
+   // these are private to the process, so p->lock need not be held.
+-  uint64 kstack;               // Virtual address of kernel stack
+   uint64 sz;                   // Size of process memory (bytes)
+   pagetable_t pagetable;       // User page table
+-  struct trapframe *trapframe; // data page for trampoline.S
+-  struct context context;      // swtch() here to run process
++  struct trapframe *headThreadTrapframe; // data page for trampoline.S
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++
++  //Signals
++  //struct sigaction defaultSigAction;
++  uint PendingSignals;          //Bit mask of pending signals
++  uint SignalMask;              //Bit mask wich signals to ignore
++  uint TempMask;                //To save the old mask when handeling signals
++  void* SignalHandlers[32];     //Pointers to handlers for each signal
++  struct sigaction Sigactions[32];  //holds sigaction for signals
++  int IsSigactionPointer[32];       //choose between SignalHandlers array or Sigactions array (bool)
++  struct trapframe UserTrapFrameBackup;  // for 2.4
++
++  int stopped;                  //Defines if the procees is stopped and waiting for SIGCONT
++
++  //threads
++  struct thread threads[NTHREADS];
++  struct spinlock tid_lock;
++  int nexttid;
++  struct spinlock join_lock;
++  
++
+ };
++
++
++
+diff --git a/kernel/spinlock.c b/kernel/spinlock.c
+index 9840302..9388582 100644
+--- a/kernel/spinlock.c
++++ b/kernel/spinlock.c
+@@ -16,14 +16,27 @@ initlock(struct spinlock *lk, char *name)
+   lk->cpu = 0;
+ }
+ 
++void myAcquirePanic(struct spinlock *lk)
++{
++    printf("pid: %d, tid: %d, lock: %s\n",myproc()->pid,mythread()->tid,lk->name);
++    panic("acquire");
++}
++
++
+ // Acquire the lock.
+ // Loops (spins) until the lock is acquired.
+ void
+ acquire(struct spinlock *lk)
+ {
++  
++  
+   push_off(); // disable interrupts to avoid deadlock.
+   if(holding(lk))
+-    panic("acquire");
++  {
++    myAcquirePanic(lk);
++    // printf("pid: %d, lock: %s\n",myproc()->pid,lk->name);
++    // panic("acquire");
++  }
+ 
+   // On RISC-V, sync_lock_test_and_set turns into an atomic swap:
+   //   a5 = 1
+@@ -47,7 +60,10 @@ void
+ release(struct spinlock *lk)
+ {
+   if(!holding(lk))
++  {
++    printf("pid: %d, lock: %s\n",myproc()->pid,lk->name);
+     panic("release");
++  }
+ 
+   lk->cpu = 0;
+ 
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index c1b3670..bcc12ba 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -34,20 +34,20 @@ fetchstr(uint64 addr, char *buf, int max)
+ static uint64
+ argraw(int n)
+ {
+-  struct proc *p = myproc();
++  struct thread *t = mythread();
+   switch (n) {
+   case 0:
+-    return p->trapframe->a0;
++    return t->trapeframe ->a0;
+   case 1:
+-    return p->trapframe->a1;
++    return t->trapeframe->a1;
+   case 2:
+-    return p->trapframe->a2;
++    return t->trapeframe->a2;
+   case 3:
+-    return p->trapframe->a3;
++    return t->trapeframe->a3;
+   case 4:
+-    return p->trapframe->a4;
++    return t->trapeframe->a4;
+   case 5:
+-    return p->trapframe->a5;
++    return t->trapeframe->a5;
+   }
+   panic("argraw");
+   return -1;
+@@ -104,43 +104,72 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_wait(void);
+ extern uint64 sys_write(void);
+ extern uint64 sys_uptime(void);
++extern uint64 sys_sigprocmask(void);
++extern uint64 sys_sigaction(void);
++extern uint64 sys_sigret(void);
++extern uint64 sys_kthread_create(void);
++extern uint64 sys_kthread_id(void);
++extern uint64 sys_kthread_exit(void);
++extern uint64 sys_kthread_join(void);
++extern uint64 sys_bsem_alloc(void);
++extern uint64 sys_bsem_free(void);
++extern uint64 sys_bsem_down(void);
++extern uint64 sys_bsem_up(void);
+ 
+ static uint64 (*syscalls[])(void) = {
+-[SYS_fork]    sys_fork,
+-[SYS_exit]    sys_exit,
+-[SYS_wait]    sys_wait,
+-[SYS_pipe]    sys_pipe,
+-[SYS_read]    sys_read,
+-[SYS_kill]    sys_kill,
+-[SYS_exec]    sys_exec,
+-[SYS_fstat]   sys_fstat,
+-[SYS_chdir]   sys_chdir,
+-[SYS_dup]     sys_dup,
+-[SYS_getpid]  sys_getpid,
+-[SYS_sbrk]    sys_sbrk,
+-[SYS_sleep]   sys_sleep,
+-[SYS_uptime]  sys_uptime,
+-[SYS_open]    sys_open,
+-[SYS_write]   sys_write,
+-[SYS_mknod]   sys_mknod,
+-[SYS_unlink]  sys_unlink,
+-[SYS_link]    sys_link,
+-[SYS_mkdir]   sys_mkdir,
+-[SYS_close]   sys_close,
++[SYS_fork]                sys_fork,
++[SYS_exit]                sys_exit,
++[SYS_wait]                sys_wait,
++[SYS_pipe]                sys_pipe,
++[SYS_read]                sys_read,
++[SYS_kill]                sys_kill,
++[SYS_exec]                sys_exec,
++[SYS_fstat]               sys_fstat,
++[SYS_chdir]               sys_chdir,
++[SYS_dup]                 sys_dup,
++[SYS_getpid]              sys_getpid,
++[SYS_sbrk]                sys_sbrk,
++[SYS_sleep]               sys_sleep,
++[SYS_uptime]              sys_uptime,
++[SYS_open]                sys_open,
++[SYS_write]               sys_write,
++[SYS_mknod]               sys_mknod,
++[SYS_unlink]              sys_unlink,
++[SYS_link]                sys_link,
++[SYS_mkdir]               sys_mkdir,
++[SYS_close]               sys_close,
++[SYS_sigprocmask]         sys_sigprocmask,
++[SYS_sigaction]           sys_sigaction,
++[SYS_sigret]              sys_sigret,
++[SYS_kthread_create]      sys_kthread_create,
++[SYS_kthread_id]          sys_kthread_id,
++[SYS_kthread_exit]        sys_kthread_exit,
++[SYS_kthread_join]        sys_kthread_join,
++[SYS_bsem_alloc]          sys_bsem_alloc,
++[SYS_bsem_free ]          sys_bsem_free,
++[SYS_bsem_down ]          sys_bsem_down,
++[SYS_bsem_up   ]          sys_bsem_up,
++
+ };
+ 
++
++
++
+ void
+ syscall(void)
+ {
+   int num;
+-  struct proc *p = myproc();
+-
+-  num = p->trapframe->a7;
++  struct thread *t = mythread();
++  
++  num = t->trapeframe->a7;
+   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+-    p->trapframe->a0 = syscalls[num]();
++    //printf("Proc %d ecalled syscall %d\n",p->pid,num);
++    int res=syscalls[num]();
++    //printf("syscall: %d, res is: %d\n",num,res);
++    t->trapeframe->a0 = res;
+   } else {
+     printf("%d %s: unknown sys call %d\n",
+-            p->pid, p->name, num);
+-    p->trapframe->a0 = -1;
++            t->tid, t->name, num);
++    t->trapeframe->a0 = -1;
+   }
+ }
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..80d8f69 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -1,22 +1,36 @@
+ // System call numbers
+-#define SYS_fork    1
+-#define SYS_exit    2
+-#define SYS_wait    3
+-#define SYS_pipe    4
+-#define SYS_read    5
+-#define SYS_kill    6
+-#define SYS_exec    7
+-#define SYS_fstat   8
+-#define SYS_chdir   9
+-#define SYS_dup    10
+-#define SYS_getpid 11
+-#define SYS_sbrk   12
+-#define SYS_sleep  13
+-#define SYS_uptime 14
+-#define SYS_open   15
+-#define SYS_write  16
+-#define SYS_mknod  17
+-#define SYS_unlink 18
+-#define SYS_link   19
+-#define SYS_mkdir  20
+-#define SYS_close  21
++#define SYS_fork                     1
++#define SYS_exit                     2
++#define SYS_wait                     3
++#define SYS_pipe                     4
++#define SYS_read                     5
++#define SYS_kill                     6
++#define SYS_exec                     7
++#define SYS_fstat                    8
++#define SYS_chdir                    9
++#define SYS_dup                     10
++#define SYS_getpid                  11
++#define SYS_sbrk                    12
++#define SYS_sleep                   13
++#define SYS_uptime                  14
++#define SYS_open                    15
++#define SYS_write                   16
++#define SYS_mknod                   17
++#define SYS_unlink                  18
++#define SYS_link                    19
++#define SYS_mkdir                   20
++#define SYS_close                   21
++#define SYS_sigprocmask             22
++#define SYS_sigaction               23
++#define SYS_sigret                  24
++#define SYS_kthread_create          25
++#define SYS_kthread_id              26
++#define SYS_kthread_exit            27
++#define SYS_kthread_join            28
++#define SYS_bsem_alloc              29
++#define SYS_bsem_free               30
++#define SYS_bsem_down               31
++#define SYS_bsem_up                 32
++
++
++
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index e8bcda9..684f388 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -77,10 +77,13 @@ uint64
+ sys_kill(void)
+ {
+   int pid;
++  int signum;
+ 
+   if(argint(0, &pid) < 0)
+     return -1;
+-  return kill(pid);
++  if(argint(1, &signum) < 0)
++    return -1;
++  return kill(pid, signum);
+ }
+ 
+ // return how many clock tick interrupts have occurred
+@@ -95,3 +98,129 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_sigprocmask(void)
++{
++  
++  uint64 mask;
++  if(argaddr(0, &mask) < 0)
++    return -1;
++  return sigprocmask(mask);
++}
++
++uint64
++sys_sigaction(void)
++{
++  int signum;
++  uint64 act;
++  uint64 oldact;
++  if(argint(0, &signum) < 0)
++  {
++    return -1;
++  }
++  if(argaddr(1, &act) < 0)
++  {
++    return -1;
++  }
++  if(argaddr(2, &oldact) < 0)
++  {
++    return -1;
++  }
++  return sigaction(signum,(struct sigaction*)act,(struct sigaction*)oldact);
++}
++
++uint64
++sys_sigret(void)
++{
++  sigret();
++  return 0;
++}
++
++uint64
++sys_kthread_create(void)
++{
++  uint64 start_func;
++  uint64 stack;
++  if(argaddr(0, &start_func) < 0)
++    return -1;
++  if(argaddr(1, &stack) < 0)
++    return -1;
++    
++  return kthread_create((void (*)())start_func,(void*)stack);
++}
++
++uint64
++sys_kthread_id(void)
++{
++  return mythread()->tid;
++}
++
++uint64
++sys_kthread_exit(void)
++{
++  
++  int status;
++  if(argint(0, &status) < 0)
++  {
++    return -1;
++  }
++  kthread_exit(status);
++  return 0;
++}
++
++uint64
++sys_kthread_join(void)
++{
++  
++  int thread_id;
++  uint64 status;
++  if(argint(0, &thread_id) < 0)
++    return -1;
++  if(argaddr(1, &status) < 0)
++    return -1; 
++  return kthread_join(thread_id,(int*)status);
++}
++
++uint64
++sys_bsem_alloc(void)
++{
++  int bsem_descriptor=allocBsem();
++  return bsem_descriptor;
++}
++
++uint64
++sys_bsem_free(void)
++{
++  int bsem;
++  if(argint(0, &bsem) < 0)
++  {
++    return -1;
++  }
++  bsem_free(bsem);
++  return 0;
++}
++
++uint64
++sys_bsem_down(void)
++{
++  int bsem;
++  if(argint(0, &bsem) < 0)
++  {
++    return -1;
++  }
++  bsem_down(bsem);
++  return 0;
++}
++
++uint64
++sys_bsem_up(void)
++{
++  int bsem;
++  if(argint(0, &bsem) < 0)
++  {
++    return -1;
++  }
++  bsem_up(bsem);
++  return 0;
++}
+\ No newline at end of file
+diff --git a/kernel/trampoline.S b/kernel/trampoline.S
+index fabaaf9..aff7bda 100644
+--- a/kernel/trampoline.S
++++ b/kernel/trampoline.S
+@@ -139,3 +139,13 @@ userret:
+         # return to user mode and user pc.
+         # usertrapret() set up sstatus and sepc.
+         sret
++
++
++# li a7, 24
++# ecall
++ .global myfunc
++ myfunc:
++li a7, 24
++ecall
++ .global endMyFunc
++ endMyFunc:
+\ No newline at end of file
+diff --git a/kernel/trap.c b/kernel/trap.c
+index a63249e..13409e7 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -9,7 +9,7 @@
+ struct spinlock tickslock;
+ uint ticks;
+ 
+-extern char trampoline[], uservec[], userret[];
++extern char trampoline[], uservec[], userret[], myfunc[];
+ 
+ // in kernelvec.S, calls kerneltrap().
+ void kernelvec();
+@@ -36,6 +36,7 @@ trapinithart(void)
+ void
+ usertrap(void)
+ {
++  //printf("usertrap\n");
+   int which_dev = 0;
+ 
+   if((r_sstatus() & SSTATUS_SPP) != 0)
+@@ -45,20 +46,27 @@ usertrap(void)
+   // since we're now in the kernel.
+   w_stvec((uint64)kernelvec);
+ 
++  struct thread *t = mythread();
+   struct proc *p = myproc();
+   
+   // save user program counter.
+-  p->trapframe->epc = r_sepc();
++  t->trapeframe->epc = r_sepc();
+   
+   if(r_scause() == 8){
+     // system call
+ 
+-    if(p->killed)
+-      exit(-1);
++  if(p->killed)
++  {
++    exit(-1);
++  }
++  if(t->killed)
++  {
++    kthread_exit(-1);
++  }
+ 
+     // sepc points to the ecall instruction,
+     // but we want to return to the next instruction.
+-    p->trapframe->epc += 4;
++    t->trapeframe->epc += 4;
+ 
+     // an interrupt will change sstatus &c registers,
+     // so don't enable until done with those registers.
+@@ -68,13 +76,19 @@ usertrap(void)
+   } else if((which_dev = devintr()) != 0){
+     // ok
+   } else {
+-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
++    printf("usertrap(): unexpected scause %p tid=%d\n", r_scause(), t->tid);
+     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+-    p->killed = 1;
++    t->killed = 1;
+   }
+ 
+   if(p->killed)
++  {
+     exit(-1);
++  }
++  if(t->killed)
++  {
++    kthread_exit(-1);
++  }
+ 
+   // give up the CPU if this is a timer interrupt.
+   if(which_dev == 2)
+@@ -89,22 +103,34 @@ usertrap(void)
+ void
+ usertrapret(void)
+ {
++  
++  //printf("usertrapret\n");
+   struct proc *p = myproc();
++  struct thread *t= mythread();
+ 
++  // if(t->idx>0)
++  // {
++  //   printf("user trap ret\n");
++  // }
++  
+   // we're about to switch the destination of traps from
+   // kerneltrap() to usertrap(), so turn off interrupts until
+   // we're back in user space, where usertrap() is correct.
+   intr_off();
+-
++  
++  checkSignalsForProcess(p);
++  
++  
+   // send syscalls, interrupts, and exceptions to trampoline.S
+   w_stvec(TRAMPOLINE + (uservec - trampoline));
+ 
++  
+   // set up trapframe values that uservec will need when
+   // the process next re-enters the kernel.
+-  p->trapframe->kernel_satp = r_satp();         // kernel page table
+-  p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
+-  p->trapframe->kernel_trap = (uint64)usertrap;
+-  p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
++  t->trapeframe->kernel_satp = r_satp();         // kernel page table
++  t->trapeframe->kernel_sp = t->kstack + PGSIZE; // process's kernel stack
++  t->trapeframe->kernel_trap = (uint64)usertrap;
++  t->trapeframe->kernel_hartid = r_tp();         // hartid for cpuid()
+ 
+   // set up the registers that trampoline.S's sret will use
+   // to get to user space.
+@@ -116,16 +142,28 @@ usertrapret(void)
+   w_sstatus(x);
+ 
+   // set S Exception Program Counter to the saved user pc.
+-  w_sepc(p->trapframe->epc);
++  w_sepc(t->trapeframe->epc);
+ 
+   // tell trampoline.S the user page table to switch to.
+   uint64 satp = MAKE_SATP(p->pagetable);
++  // if(t->idx>0)
++  // {
++  //   printf("here\n");
++  // }
+ 
+   // jump to trampoline.S at the top of memory, which 
+   // switches to the user page table, restores user registers,
+   // and switches to user mode with sret.
+-  uint64 fn = TRAMPOLINE + (userret - trampoline);
+-  ((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
++  
++  // struct trapframe *tp= (struct trapframe *)(TRAPFRAME+t->idx*sizeof(struct trapframe));
++  // if(t->idx>0)
++  // {
++  //   printf("usertrap epc : %p",tp->epc);
++  // }
++  //struct proc *p=myproc();
++    uint64 fn = TRAMPOLINE + (userret - trampoline);
++    ((void (*)(uint64,uint64))fn)(TRAPFRAME+(uint64)(t->trapeframe)-(uint64)(p->headThreadTrapframe), satp);
++    //+t->idx*sizeof(struct trapframe)
+ }
+ 
+ // interrupts and exceptions from kernel code go here via kernelvec,
+@@ -144,14 +182,19 @@ kerneltrap()
+     panic("kerneltrap: interrupts enabled");
+ 
+   if((which_dev = devintr()) == 0){
++    
+     printf("scause %p\n", scause);
+     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
++    
+     panic("kerneltrap");
+   }
+ 
+   // give up the CPU if this is a timer interrupt.
+-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
++  if(which_dev == 2 && myproc() != 0 && mythread()->state == RUNNING)
++  {
++    //printf("kernel yielding\n");
+     yield();
++  }
+ 
+   // the yield() may have caused some traps to occur,
+   // so restore trap registers for use by kernelvec.S's sepc instruction.
+diff --git a/user/Csemaphore.c b/user/Csemaphore.c
+new file mode 100644
+index 0000000..79e3ff1
+--- /dev/null
++++ b/user/Csemaphore.c
+@@ -0,0 +1,46 @@
++#include "user/Csemaphore.h"
++#include "kernel/types.h"
++#include "user/user.h"
++#include "kernel/fcntl.h"
++#include "kernel/param.h"
++
++
++void csem_down(struct counting_semaphore *sem)
++{
++    bsem_down(sem->S2_descriptor);
++    bsem_down(sem->S1_descriptor);
++    sem->value-=1;
++    if(sem->value>0)
++    {
++        bsem_up(sem->S2_descriptor);
++    }
++    bsem_up(sem->S1_descriptor);
++}
++void csem_up(struct counting_semaphore *sem)
++{
++    bsem_down(sem->S1_descriptor);
++    sem->value+=1;
++    if(sem->value==1)
++    {
++        bsem_up(sem->S2_descriptor);
++    }
++    bsem_up(sem->S1_descriptor);
++
++}
++int csem_alloc(struct counting_semaphore *sem, int initial_value)
++{
++    sem->S1_descriptor=bsem_alloc();
++    sem->S2_descriptor=bsem_alloc();
++    sem->value=initial_value;
++    if(sem->S1_descriptor<0 ||sem->S2_descriptor<0 || initial_value<=0)
++    {
++        return -1;
++    }
++    return 0;
++}
++void csem_free(struct counting_semaphore *sem)
++{
++    bsem_free(sem->S1_descriptor);
++    bsem_free(sem->S2_descriptor);
++}
++
+diff --git a/user/Csemaphore.h b/user/Csemaphore.h
+new file mode 100644
+index 0000000..3b5da07
+--- /dev/null
++++ b/user/Csemaphore.h
+@@ -0,0 +1,13 @@
++
++struct counting_semaphore
++{
++    int S1_descriptor;
++    int S2_descriptor;
++    int value;
++};
++
++void csem_down(struct counting_semaphore *sem);
++void csem_up(struct counting_semaphore *sem);
++int csem_alloc(struct counting_semaphore *sem, int initial_value);
++void csem_free(struct counting_semaphore *sem);
++
+diff --git a/user/grind.c b/user/grind.c
+index 5cd89f4..085583c 100644
+--- a/user/grind.c
++++ b/user/grind.c
+@@ -142,12 +142,12 @@ go(int which_child)
+         printf("grind: chdir failed\n");
+         exit(1);
+       }
+-      kill(pid);
++      kill(pid,SIGKILL);
+       wait(0);
+     } else if(what == 18){
+       int pid = fork();
+       if(pid == 0){
+-        kill(getpid());
++        kill(getpid(),SIGKILL);
+         exit(0);
+       } else if(pid < 0){
+         printf("grind: fork failed\n");
+@@ -324,8 +324,8 @@ iter()
+   int st1 = -1;
+   wait(&st1);
+   if(st1 != 0){
+-    kill(pid1);
+-    kill(pid2);
++    kill(pid1,SIGKILL);
++    kill(pid2,SIGKILL);
+   }
+   int st2 = -1;
+   wait(&st2);
+diff --git a/user/init.c b/user/init.c
+index e0a5689..698bc33 100644
+--- a/user/init.c
++++ b/user/init.c
+@@ -15,7 +15,6 @@ int
+ main(void)
+ {
+   int pid, wpid;
+-
+   if(open("console", O_RDWR) < 0){
+     mknod("console", CONSOLE, 0);
+     open("console", O_RDWR);
+@@ -39,7 +38,9 @@ main(void)
+     for(;;){
+       // this call to wait() returns if the shell exits,
+       // or if a parentless process exits.
++      //printf("Before wait\n");
+       wpid = wait((int *) 0);
++      //printf("After wait\n");
+       if(wpid == pid){
+         // the shell exited; restart it.
+         break;
+diff --git a/user/kill.c b/user/kill.c
+index 1b0253b..aa9001c 100644
+--- a/user/kill.c
++++ b/user/kill.c
+@@ -1,17 +1,19 @@
+ #include "kernel/types.h"
+ #include "kernel/stat.h"
+ #include "user/user.h"
++#include "kernel/param.h"
++
+ 
+ int
+ main(int argc, char **argv)
+ {
+   int i;
+ 
+-  if(argc < 2){
+-    fprintf(2, "usage: kill pid...\n");
++  if(argc < 3){
++    fprintf(2, "usage: kill pid signal...\n");
+     exit(1);
+   }
+-  for(i=1; i<argc; i++)
+-    kill(atoi(argv[i]));
++  for(i=1; i<argc; i+=2)
++    kill(atoi(argv[i]),atoi(argv[i+1]));
+   exit(0);
+-}
++}
+\ No newline at end of file
+diff --git a/user/sh.c b/user/sh.c
+index 83dd513..a7f0ba4 100644
+--- a/user/sh.c
++++ b/user/sh.c
+@@ -75,6 +75,7 @@ runcmd(struct cmd *cmd)
+     ecmd = (struct execcmd*)cmd;
+     if(ecmd->argv[0] == 0)
+       exit(1);
++    //printf("Calling exec\n");
+     exec(ecmd->argv[0], ecmd->argv);
+     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
+     break;
+@@ -165,7 +166,10 @@ main(void)
+       continue;
+     }
+     if(fork1() == 0)
++    {
++      //fprintf(2,"After fork1\n");
+       runcmd(parsecmd(buf));
++    }
+     wait(0);
+   }
+   exit(0);
+diff --git a/user/tomer.c b/user/tomer.c
+new file mode 100644
+index 0000000..df88e13
+--- /dev/null
++++ b/user/tomer.c
+@@ -0,0 +1,593 @@
++#include "kernel/param.h"
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++#include "kernel/fs.h"
++#include "kernel/fcntl.h"
++#include "kernel/syscall.h"
++#include "kernel/memlayout.h"
++#include "kernel/riscv.h"
++
++
++#include "kernel/spinlock.h"  // NEW INCLUDE FOR ASS2
++#include "Csemaphore.h"   // NEW INCLUDE FOR ASS 2
++#include "kernel/proc.h"         // NEW INCLUDE FOR ASS 2, has all the signal definitions and sigaction definition.  Alternatively, copy the relevant things into user.h and include only it, and then no need to include spinlock.h .
++
++
++void hello()
++{
++    int count=0;
++    for (int i = 0; i < 50; i++)
++    {
++        printf("%d",count);
++    }
++    sigret();
++    
++}
++
++void printSomething(int a)
++{
++    fprintf(2,"I am a good handler\n");
++}
++
++void someCode()
++{
++    fprintf(2,"%d",&hello);
++    int newPid=fork();
++    if(newPid==0)
++    {
++        void (*ptrFun)()=printSomething;
++        fprintf(2,"printsomething address: %d\n",(unsigned char*)&ptrFun);
++        struct sigaction myaction;
++        myaction.sa_handler=&printSomething;
++        sigaction(SIGCONT, &myaction,0);
++       //Child
++       fprintf(2,"I am the child\n");
++       for (int i = 0; i <100; i++)
++       {
++           fprintf(2,"$");
++       }
++       kill(getpid(),SIGCONT);
++       for (int i = 0; i <100; i++)
++       {
++           fprintf(2,"$");
++       }
++       sleep(5);
++       exit(0);
++    }
++    else
++    {
++        //Father
++        //fprintf(2,"Luke, I am your father\n");
++        // sleep(5);
++        // kill(newPid,SIGSTOP);
++        
++        // sleep(2);
++        // kill(newPid,SIGCONT);
++        // sleep(2);
++        
++        wait(&newPid);
++        exit(0);
++    }
++}
++
++void simpleSignalTest()
++{
++    int newPid=fork();
++    if(newPid==0)
++    {
++        
++        struct sigaction myaction;
++        myaction.sa_handler=printSomething;
++        myaction.sigmask=0;
++        int ans=sigaction(20,&myaction,0);
++        
++        if(ans<0)
++        {
++             fprintf(2,"Sigaction failed");
++        }
++        //sleep(20);
++        //Child
++        //int k=0;
++        for (int i = 0; i < __INT16_MAX__; i++)
++        {
++            fprintf(2, "$");
++        }
++        printf("child exiting\n");
++    }
++    else
++    {
++        sleep(10);
++        
++        int ans=kill(newPid,20);
++        if(ans==-1)
++        {
++            printf("Kill failed\n");
++        }
++        //Father
++    //     fprintf(2,"Stopping\n");
++    //     kill(newPid,SIGSTOP);
++
++    //     sleep(10);
++    //     fprintf(2,"Conting\n");
++    //    kill(newPid,SIGCONT);
++    //     wait(&newPid);
++    printf("father exits\n");
++    exit(0);
++    }
++    
++}
++
++
++
++
++
++
++
++
++void tst_SpecialNum_CantBeMasked()
++{
++    fprintf(2,"----Test special signals can't be masked\n");
++    int newPid=fork();
++    if(newPid==0)
++    {
++        //Child
++        struct sigaction mysigaction;
++        mysigaction.sa_handler=(void*)SIGCONT;
++        mysigaction.sigmask=(1<<SIGKILL);
++        int ans=sigaction(SIGKILL,&mysigaction,0);
++        if(ans<0)
++        {
++            fprintf(2,"Test change kill action-> should fail: OK\n");
++        }
++        else
++        {
++            fprintf(2,"Test change kill action-> should fail: Fail\n");
++        }
++
++        ans=sigaction(SIGSTOP,&mysigaction,0);
++
++        if(ans<0)
++        {
++            fprintf(2,"Test change stop action-> should fail: OK\n");
++        }
++        else
++        {
++            fprintf(2,"Test change stop action-> should fail: Fail\n");
++        }
++
++        ans=sigaction(SIGCONT,&mysigaction,0);
++
++        if(ans<0)
++        {
++            fprintf(2,"Test change cont action with kill and stop masked-> should fail: OK\n");
++        }
++        else
++        {
++            fprintf(2,"Test change stop with kill and stop masked-> should fail: Fail\n");
++        }
++
++        ans=sigaction(20,&mysigaction,0);
++
++        if(ans<0)
++        {
++            fprintf(2,"Test change cont action with kill and stop masked-> should fail: OK\n");
++        }
++        else
++        {
++            fprintf(2,"Test change stop with kill and stop masked-> should fail: Fail\n");
++        }
++        int i=0;
++        while (i<__INT32_MAX__)
++        {
++            i++;
++            //do nothing
++        }
++        fprintf(2,"Test send SIGKILL: Fail\n");
++
++    }
++    else
++    {
++        //Father
++        sleep(10);
++        kill(newPid,SIGKILL);
++        wait(&newPid);
++        fprintf(2,"Test send SIGKILL: OK (if not fail one line before)\n");
++    }
++    
++}
++
++void printTestSucceeded()
++{
++    fprintf(2,"=)\n");
++}
++
++
++void tst_STOP()
++{
++    int newpid=fork();
++    if(newpid==0)
++    {
++        //Child
++        for (int i = 0; i <2000; i++)
++        {
++            fprintf(2,"$");
++        }
++        exit(0);
++    }
++    else
++    {
++        //Father
++        sleep(3);
++        fprintf(2,"\nStop!\n");
++        kill(newpid,SIGSTOP);
++        sleep(10);
++        fprintf(2,"\nContinue!\n");
++        kill(newpid,SIGCONT);
++        wait(&newpid);
++        fprintf(2,"If print stopped and than continued: OK\n");
++        exit(0);
++    }
++    
++}
++
++void tst_SIGSTOP()
++{
++    int newpid=fork();
++    if(newpid==0)
++    {
++        struct sigaction mysig;
++        mysig.sa_handler=printTestSucceeded;
++        sigaction(20,&mysig,0);
++        //Child
++        sleep(20);
++        exit(0);
++    }
++    else
++    {
++        //Father
++        sleep(5);
++        kill(newpid,20);
++        kill(newpid,SIGSTOP);
++        sleep(10);
++        int anscont=kill(newpid,SIGCONT);
++        if(anscont<=0)
++        {
++            fprintf(2,"Test SIGSTOP: Fail\n");
++        }
++        int ans=kill(newpid,20);
++        if(ans>=0)
++        {
++            fprintf(2,"Test SIGSTOP: OK\n");
++        }
++        exit(0);
++    }
++    
++}
++void printSigNum(int a)
++{
++    fprintf(2,"signum: %d",a);
++}
++
++void tst_NotSpecialSignal_SpecialHandler()
++{
++    int newpid=fork();
++    if(newpid==0)
++    {
++        struct sigaction mysig;
++        mysig.sa_handler=(void*)SIG_IGN;
++        sigaction(20,&mysig,0);
++        sleep(4);
++
++        mysig.sa_handler=(void*)SIGSTOP;
++        sigaction(21,&mysig,0);
++
++        mysig.sa_handler=(void*)SIGCONT;
++        sigaction(23,&mysig,0);
++        for (int i = 0; i < __INT16_MAX__; i++)
++        {
++            fprintf(2,"$");
++        }
++        
++        sleep(4);
++
++
++
++        //Child
++        sleep(20);
++        exit(0);
++    }
++    else
++    {
++        //Father
++        sleep(2);
++        kill(newpid,20);
++        
++        sleep(8);
++        fprintf(2,"\nStop!\n");
++        kill(newpid,21);
++        sleep(5);
++        fprintf(2,"\nCont!\n");
++        kill(newpid,23);
++
++        kill(newpid,22);
++        wait(&newpid);
++        exit(0);
++    }
++}
++
++void myTomer()
++{
++    // fprintf(2,"myTomer thread id: %d\n", kthread_id());
++    //fprintf(2, "myTomer proc id: %d\n", getpid());
++    for(int i = 0; i < 5; i++){
++        fprintf(2,"Hello tomer\n");
++        fprintf(2,"Hello dor\n");
++    }
++    // fprintf(2,"before myTomer exit\n");
++    kthread_exit(0);
++}
++
++
++void tst_kthreadCreate()
++{
++    fprintf(2,"tst kthread_create\n");
++    void* stack= malloc(MAX_STACK_SIZE);
++    kthread_create(myTomer,stack);
++    int id = kthread_id();
++    fprintf(2, "test thread id: %d\n", id);
++    
++    
++    // kthread_exit(0);
++    // fprintf(2,"I should not be printed\n");
++}
++
++void tst_kthreadJoin()
++{
++    fprintf(2,"tst kthread_join\n");
++    void* stack= malloc(MAX_STACK_SIZE);
++    kthread_create(myTomer,stack);
++    //int id = kthread_id();
++    // fprintf(2, "test thread id: %d\n", id);
++    // fprintf(2, "test proc id: %d\n", getpid());
++    int status;
++    fprintf(2,"Before Join\n");
++    kthread_join(8, &status);
++    fprintf(2,"After Join\n");
++    kthread_exit(0);
++    // fprintf(2,"I should not be printed\n");
++}
++
++
++int globalNumber=0;
++
++void tst_CountingSemaphore()
++{
++    struct counting_semaphore my_cSema;
++    csem_alloc(&my_cSema,2);
++    int countBsem= bsem_alloc();
++
++    // printf("Now avilable: %d\n",my_cSema.value);
++    // printf("S1: %d\n",my_cSema.S1_descriptor);
++    // printf("S2: %d\n",my_cSema.S2_descriptor);
++    int child1=fork();
++    int child2;
++    int child3;
++    if(child1==0)
++    {
++        //fprintf(2,"Child 1: My name is: %d\n",getpid());
++        //child1
++        
++        for (int i = 0; i < 100; i++)
++        {
++            csem_down(&my_cSema);
++            bsem_down(countBsem);
++            globalNumber+=1;
++            bsem_up(countBsem);
++            fprintf(2,"%d ",globalNumber);
++            //sleep(100);
++            bsem_down(countBsem);
++            globalNumber-=1;
++            bsem_up(countBsem);
++            csem_up(&my_cSema);
++        }
++        
++        exit(0);
++        
++
++    }
++    else
++    {
++        child2=fork();
++        if(child2==0)
++        {
++            //child2
++            //fprintf(2,"Child 2: My name is: %d\n",getpid());
++            for (int i = 0; i < 100; i++)
++            {
++                csem_down(&my_cSema);
++                bsem_down(countBsem);
++                globalNumber+=1;
++                bsem_up(countBsem);
++                fprintf(2,"%d ",globalNumber);
++                //sleep(100);
++                bsem_down(countBsem);
++                globalNumber-=1;
++                bsem_up(countBsem);
++                csem_up(&my_cSema);
++            }
++            exit(0);
++        }
++        else
++        {
++            
++            child3=fork();
++            if(child3==0)
++            {
++                //child 3
++                for (int i = 0; i < 100; i++)
++                {
++                    csem_down(&my_cSema);
++                    bsem_down(countBsem);
++                    globalNumber+=1;
++                    bsem_up(countBsem);
++                    fprintf(2,"%d ",globalNumber);
++                    //sleep(100);
++                    bsem_down(countBsem);
++                    globalNumber-=1;
++                    bsem_up(countBsem);
++                    csem_up(&my_cSema);
++                }
++                exit(0);
++
++            }
++            else
++            {
++                //father
++                //fprintf(2,"Luke i am your father: My name is: %d\n",getpid());
++                // for (int i = 0; i < 1000; i++)
++                // {
++                //     printf("D");
++                // }
++                // fprintf(2,"D finish\n");
++                for (int i = 0; i < 100; i++)
++                {
++                    csem_down(&my_cSema);
++                    bsem_down(countBsem);
++                    globalNumber+=1;
++                    bsem_up(countBsem);
++                    fprintf(2,"%d ",globalNumber);
++                    //sleep(100);
++                    bsem_down(countBsem);
++                    globalNumber-=1;
++                    bsem_up(countBsem);
++                    csem_up(&my_cSema);
++                }
++                  
++                wait(&child2);
++                wait(&child1);
++                wait(&child3);
++                exit(0);
++            }
++        }
++        
++    }
++}
++
++
++void tst_binarySemaphore()
++{
++    int newSemap=bsem_alloc();
++    int newPid=fork();
++    
++    if(newPid==0)
++    {
++        //child
++        bsem_down(newSemap);
++        printf("Priniting child\n");
++        bsem_up(newSemap);
++        exit(0);
++
++
++    }
++    else
++    {
++        //Father
++        bsem_down(newSemap);
++        printf("Priniting father\n");
++        bsem_up(newSemap);
++        wait(&newPid);
++        
++    }
++    bsem_free(newSemap);
++    printf("Finish\n");
++    exit(0);
++
++    
++}
++
++#define print(s) printf("%s\n", s);
++#define STACK_SIZE 4000
++int shared = 0;
++void func()
++{
++    //fprintf(2,"thread tid: %d, going to sleep\n",kthread_id());
++    sleep(5);
++    shared++;
++    fprintf(2,"thread tid: %d, exiting\n",kthread_id());
++    kthread_exit(7);
++}
++
++void tst_ido1()
++{
++    int MYNUMBER=5;
++    int tids[MYNUMBER];
++    void *stacks[MYNUMBER];
++    for (int i = 0; i < MYNUMBER; i++)
++    {
++        void *stack = malloc(STACK_SIZE);
++        tids[i] = kthread_create(func, stack);
++        stacks[i] = stack;
++    }
++    for (int i = 0; i < MYNUMBER; i++)
++    {
++        int status;
++        kthread_join(tids[i], &status);
++        free(stacks[i]);    
++        printf("the status is: %d\n", status);
++    }
++    printf("%d\n", shared);
++    exit(0);
++}
++
++
++void printSomethingForThread()
++{
++    sleep(10);
++    for (int i = 0; i < 1000; i++)
++    {
++        fprintf(2,"$");
++    }
++
++    fprintf(2,"\nchild thread exiting\n");
++    kthread_exit(0);
++
++    
++}
++
++
++void tst_basicThreadFunctions()
++{
++    void* stack= malloc(MAX_STACK_SIZE);
++    int tid1=kthread_create(printSomethingForThread,stack);
++    fprintf(2,"new thread id: %d\nJoining now\n",tid1);
++    int status;
++    fprintf(2,"trying to join thread %d\n",tid1);
++    int ret=kthread_join(tid1,&status);
++    if(ret==-1)
++    {
++        fprintf(2,"kthread join failed\n");
++    }
++    fprintf(2,"father thread exiting\n");
++    kthread_exit(0);
++
++
++}
++
++
++
++int main(int argc, char** argv)
++{
++    //tst_SpecialNum_CantBeMasked();
++    //tst_STOP();
++    //tst_NotSpecialSignal_SpecialHandler();
++    //tst_kthreadCreate();
++    simpleSignalTest();
++    //tst_kthreadJoin();
++    //tst_CountingSemaphore();
++    //tst_ido1();
++    //tst_basicThreadFunctions();
++    sleep(10);
++    exit(0);
++}
++
+diff --git a/user/user.h b/user/user.h
+index b71ecda..fca9b07 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -1,6 +1,11 @@
+ struct stat;
+ struct rtcdate;
+ 
++struct sigaction;//{
++  // void (*sa_handler) (int);
++  // uint sigmask;
++//};
++
+ // system calls
+ int fork(void);
+ int exit(int) __attribute__((noreturn));
+@@ -9,7 +14,7 @@ int pipe(int*);
+ int write(int, const void*, int);
+ int read(int, void*, int);
+ int close(int);
+-int kill(int);
++int kill(int, int);
+ int exec(char*, char**);
+ int open(const char*, int);
+ int mknod(const char*, short, short);
+@@ -23,6 +28,17 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++uint sigprocmask(uint);
++int sigaction(int, const struct sigaction*, struct sigaction*);
++void sigret(void);
++int kthread_create(void (*start_func)(),void *stack);
++int kthread_id();
++void kthread_exit(int status);
++int kthread_join(int thread_id,int *status);
++int bsem_alloc();
++void bsem_free(int);
++void bsem_down(int);
++void bsem_up(int);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usertests.c b/user/usertests.c
+index ba4255b..c305e84 100644
+--- a/user/usertests.c
++++ b/user/usertests.c
+@@ -8,6 +8,12 @@
+ #include "kernel/memlayout.h"
+ #include "kernel/riscv.h"
+ 
++
++#include "kernel/spinlock.h"  // NEW INCLUDE FOR ASS2
++#include "Csemaphore.h"   // NEW INCLUDE FOR ASS 2
++#include "kernel/proc.h"         // NEW INCLUDE FOR ASS 2, has all the signal definitions and sigaction definition.  Alternatively, copy the relevant things into user.h and include only it, and then no need to include spinlock.h .
++
++
+ //
+ // Tests xv6 system calls.  usertests without arguments runs them all
+ // and usertests <name> runs <name> test. The test runner creates for
+@@ -17,10 +23,117 @@
+ // prints "OK".
+ //
+ 
++#define SIGKILL 9
+ #define BUFSZ  ((MAXOPBLOCKS+2)*BSIZE)
+ 
+ char buf[BUFSZ];
+ 
++
++int wait_sig = 0;
++
++void test_handler(int signum){
++    wait_sig = 1;
++    printf("Received sigtest\n");
++}
++
++void test_thread(){
++    printf("Thread is now running\n");
++    kthread_exit(0);
++}
++
++void signal_test(char *s){
++    int pid;
++    int testsig;
++    testsig=15;
++    struct sigaction act = {test_handler, (uint)(1 << 29)};
++    struct sigaction old;
++
++    sigprocmask(0);
++    sigaction(testsig, &act, &old);
++    if((pid = fork()) == 0){
++        while(!wait_sig)
++            sleep(1);
++        exit(0);
++    }
++    kill(pid, testsig);
++    wait(&pid);
++    printf("Finished testing signals\n");
++}
++
++void thread_test(char *s){
++    int tid;
++    int status;
++    void* stack = malloc(MAX_STACK_SIZE);
++    tid = kthread_create(test_thread, stack);
++    kthread_join(tid,&status);
++
++    tid = kthread_id();
++    free(stack);
++    printf("Finished testing threads, main thread id: %d, %d\n", tid,status);
++}
++
++
++void bsem_test(char *s){
++    int pid;
++    int bid = bsem_alloc();
++    bsem_down(bid);
++    printf("1. Parent downing semaphore\n");
++    if((pid = fork()) == 0){
++        printf("2. Child downing semaphore\n");
++        bsem_down(bid);
++        printf("4. Child woke up\n");
++        exit(0);
++    }
++    sleep(5);
++    printf("3. Let the child wait on the semaphore...\n");
++    sleep(10);
++    bsem_up(bid);
++
++    bsem_free(bid);
++    wait(&pid);
++
++    printf("Finished bsem test, make sure that the order of the prints is alright. Meaning (1...2...3...4)\n");
++}
++
++
++void Csem_test(char *s){
++	struct counting_semaphore csem;
++    int retval;
++    int pid;
++    
++    
++    retval = csem_alloc(&csem,1);
++    if(retval==-1)
++    {
++		printf("failed csem alloc");
++		exit(-1);
++	}
++    csem_down(&csem);
++    printf("1. Parent downing semaphore\n");
++    if((pid = fork()) == 0){
++        printf("2. Child downing semaphore\n");
++        csem_down(&csem);
++        printf("4. Child woke up\n");
++        exit(0);
++    }
++    sleep(5);
++    printf("3. Let the child wait on the semaphore...\n");
++    sleep(10);
++    csem_up(&csem);
++
++    csem_free(&csem);
++    wait(&pid);
++
++    printf("Finished bsem test, make sure that the order of the prints is alright. Meaning (1...2...3...4)\n");
++}
++
++
++
++
++
++
++
++
+ // what if you pass ridiculous pointers to system calls
+ // that read user memory with copyin?
+ void
+@@ -799,7 +912,7 @@ killstatus(char *s)
+       exit(0);
+     }
+     sleep(1);
+-    kill(pid1);
++    kill(pid1, SIGKILL);
+     wait(&xst);
+     if(xst != -1) {
+        printf("%s: status should be -1\n", s);
+@@ -856,9 +969,9 @@ preempt(char *s)
+   }
+   close(pfds[0]);
+   printf("kill... ");
+-  kill(pid1);
+-  kill(pid2);
+-  kill(pid3);
++  kill(pid1, SIGKILL);
++  kill(pid2, SIGKILL);
++  kill(pid3, SIGKILL);
+   printf("wait... ");
+   wait(0);
+   wait(0);
+@@ -914,7 +1027,7 @@ reparent(char *s)
+     } else {
+       int pid2 = fork();
+       if(pid2 < 0){
+-        kill(master_pid);
++        kill(master_pid, SIGKILL);
+         exit(1);
+       }
+       exit(0);
+@@ -2263,7 +2376,7 @@ sbrkfail(char *s)
+   for(i = 0; i < sizeof(pids)/sizeof(pids[0]); i++){
+     if(pids[i] == -1)
+       continue;
+-    kill(pids[i]);
++    kill(pids[i], SIGKILL);
+     wait(0);
+   }
+   if(c == (char*)0xffffffffffffffffL){
+@@ -2766,66 +2879,81 @@ main(int argc, char *argv[])
+     void (*f)(char *);
+     char *s;
+   } tests[] = {
+-    {manywrites, "manywrites"},
+-    {execout, "execout"},
+-    {copyin, "copyin"},
+-    {copyout, "copyout"},
+-    {copyinstr1, "copyinstr1"},
+-    {copyinstr2, "copyinstr2"},
+-    {copyinstr3, "copyinstr3"},
+-    {rwsbrk, "rwsbrk" },
+-    {truncate1, "truncate1"},
+-    {truncate2, "truncate2"},
+-    {truncate3, "truncate3"},
+-    {reparent2, "reparent2"},
+-    {pgbug, "pgbug" },
+-    {sbrkbugs, "sbrkbugs" },
++	  //ASS 2 Compilation tests:
++	  {signal_test,"signal_test"},
++	  {thread_test,"thread_test"},
++	  {bsem_test,"bsem_test"},
++	  {Csem_test,"Csem_test"},
++	  
++// ASS 1 tests
++//	{stracetest,"stracetest"},    //18 ticks, need to compare inputs
++//	{CombinedPerfPriorityFCFStest,"CombinedPerfPriorityFCFStest"},  //90 ticks, long calculation results: in DEFAULT, averages and stime equal between runs,   in FCFS and SRT(with starting value QUANTUM*100), stime rises with each run (each run waits for all the previous), in CFSD short long short long.
++//	{FCFStest,"FCFStest"},
++//	{priority_intput_validation,"priority_intput_validation"},
++	
++	
++		  
++// xv6 included tests:  // comented out long tests
++ //   {manywrites, "manywrites"},  //800 ticks, too long
++ //   {execout, "execout"}, //1600 ticks, too long
++    {copyin, "copyin"},//5 ticks
++    {copyout, "copyout"},// 0 ticks
++    {copyinstr1, "copyinstr1"},// 0 ticks
++    {copyinstr2, "copyinstr2"},// 1 ticks
++    {copyinstr3, "copyinstr3"},// 0 ticks
++    {rwsbrk, "rwsbrk" },// 3 ticks
++    {truncate1, "truncate1"},// 4 ticks
++    {truncate2, "truncate2"},// 4 ticks
++ //   {truncate3, "truncate3"},// 0 ticks
++//    {reparent2, "reparent2"},// 600 ticks, causes fails in 
++    {pgbug, "pgbug" },// 0 ticks
++   // {sbrkbugs, "sbrkbugs" }, // 1 ticks
+     // {badwrite, "badwrite" },
+-    {badarg, "badarg" },
++    {badarg, "badarg" },// 200 ticks
+     {reparent, "reparent" },
+     {twochildren, "twochildren"},
+     {forkfork, "forkfork"},
+     {forkforkfork, "forkforkfork"},
+-    {argptest, "argptest"},
+-    {createdelete, "createdelete"},
+-    {linkunlink, "linkunlink"},
+-    {linktest, "linktest"},
+-    {unlinkread, "unlinkread"},
+-    {concreate, "concreate"},
+-    {subdir, "subdir"},
+-    {fourfiles, "fourfiles"},
+-    {sharedfd, "sharedfd"},
+-    {dirtest, "dirtest"},
+-    {exectest, "exectest"},
+-    {bigargtest, "bigargtest"},
+-    {bigwrite, "bigwrite"},
+-    {bsstest, "bsstest"},
+-    {sbrkbasic, "sbrkbasic"},
+-    {sbrkmuch, "sbrkmuch"},
+-    {kernmem, "kernmem"},
+-    {sbrkfail, "sbrkfail"},
+-    {sbrkarg, "sbrkarg"},
+-    {validatetest, "validatetest"},
+-    {stacktest, "stacktest"},
+-    {opentest, "opentest"},
+-    {writetest, "writetest"},
+-    {writebig, "writebig"},
+-    {createtest, "createtest"},
+-    {openiputtest, "openiput"},
+-    {exitiputtest, "exitiput"},
+-    {iputtest, "iput"},
+-    {mem, "mem"},
+-    {pipe1, "pipe1"},
+-    {killstatus, "killstatus"},
+-    {preempt, "preempt"},
+-    {exitwait, "exitwait"},
+-    {rmdot, "rmdot"},
+-    {fourteen, "fourteen"},
+-    {bigfile, "bigfile"},
+-    {dirfile, "dirfile"},
+-    {iref, "iref"},
+-    {forktest, "forktest"},
+-    {bigdir, "bigdir"}, // slow
++    {argptest, "argptest"},// 1 ticks
++//    {createdelete, "createdelete"},// 200 ticks
++//    {linkunlink, "linkunlink"},// 80 ticks
++    {linktest, "linktest"},// 9 ticks
++    {unlinkread, "unlinkread"},// 7 ticks
++//    {concreate, "concreate"},// 430 ticks
++    {subdir, "subdir"},// 24 ticks
++    {fourfiles, "fourfiles"},// 26 ticks
++//    {sharedfd, "sharedfd"},// 200 ticks
++    {dirtest, "dirtest"},// 4 ticks
++    {exectest, "exectest"},// 0 ticks
++    {bigargtest, "bigargtest"},//4 ticks
++    {bigwrite, "bigwrite"},// 170 ticks
++    {bsstest, "bsstest"},// 0 ticks
++//    {sbrkbasic, "sbrkbasic"},// 90 ticks
++//    {sbrkmuch, "sbrkmuch"},// 70 ticks
++ //   {kernmem, "kernmem"},// 17 ticks
++//    {sbrkfail, "sbrkfail"},// 300 ticks
++    {sbrkarg, "sbrkarg"},// 4 ticks
++    {validatetest, "validatetest"},// 11 ticks
++  //  {stacktest, "stacktest"},// 0 ticks
++    {opentest, "opentest"},// 1 ticks
++//    {writetest, "writetest"},// 50 ticks
++//    {writebig, "writebig"},// 130 ticks
++//    {createtest, "createtest"},// 200 ticks
++    {openiputtest, "openiput"},// 5 ticks
++    {exitiputtest, "exitiput"},// 5 ticks
++    {iputtest, "iput"},// 4 ticks
++//    {mem, "mem"},// 200 ticks
++    {pipe1, "pipe1"},// 1 ticks
++//    {killstatus, "killstatus"},//150 ticks
++    {preempt, "preempt"},    //doesn't work on FCFS
++    {exitwait, "exitwait"},// 18 ticks
++    {rmdot, "rmdot"},//6 ticks
++    {fourteen, "fourteen"},// 12 ticks
++    {bigfile, "bigfile"},// 12 ticks
++    {dirfile, "dirfile"},// 4 ticks
++//    {iref, "iref"},// 160 ticks
++    {forktest, "forktest"}, // 14 ticks
++//    {bigdir, "bigdir"}, // slow // 3800 ticks
+     { 0, 0},
+   };
+ 
+diff --git a/user/usertests_threads.c b/user/usertests_threads.c
+new file mode 100644
+index 0000000..8686b85
+--- /dev/null
++++ b/user/usertests_threads.c
+@@ -0,0 +1,934 @@
++
++#include "kernel/syscall.h"
++#include <stdarg.h>
++#include "kernel/types.h"
++#include "user/user.h"
++#include "kernel/fcntl.h"
++#include "kernel/param.h"
++#include "user/Csemaphore.h"
++
++/*
++README: TODO
++*/
++
++/*
++// TODO:
++* exit with multiple threads
++* too many threads (process has NTHREADS threads)
++* exec with multiple threads
++* fork with multiple threads
++* multiple threads in join
++* kthread_create when collpasing
++* kthread_join when collapsing
++* exit when collapsing
++* exec when collpsing
++*/
++
++#define NTHREAD 8
++#define STDOUT 1
++void vprintf(int, const char*, va_list);
++
++// #define ALLOW_PRINTING
++#define print_test_error(s, msg) printf("%s: %s\n", (s), (msg))
++
++struct test {
++  void (*f)(char *);
++  char *name;
++  int expected_exit_status;
++  int repeat_count;
++};
++
++char *exec_simple_argv[] = {
++  "<placeholder>",
++  "--exec-test-simple-func",
++  0
++};
++char *exec_argv[] = {
++  "<placeholder>",
++  "--exec-test-func",
++  0
++};
++
++int pipe_fds[2];
++int pipe_fds_2[2];
++char *test_name;
++int expected_xstatus;
++
++void print(char *fmt, ...) {
++  #ifdef ALLOW_PRINTING
++  va_list ap;
++  va_start(ap, fmt);
++  vprintf(STDOUT, fmt, ap);
++  va_end(ap);
++  printf("\n");
++  #endif
++}
++
++int run(struct test *test) {
++  int pid;
++  int xstatus;
++
++  if (test->repeat_count <= 0) {
++    printf("RUN ERR: invalid repeat count (%d) for test %s. must be a positive value\n", test->repeat_count, test->name);
++    return 0;
++  }
++
++  test_name = test->name;
++  expected_xstatus = test->expected_exit_status;
++  printf("test %s:\n", test->name);
++  for (int i = 0; i < test->repeat_count; i++) {
++    if((pid = fork()) < 0) {
++      printf("runtest: fork error\n");
++      exit(1);
++    }
++    if(pid == 0) {
++      test->f(test->name);
++      exit(0);
++    }
++    else {
++      wait(&xstatus);
++      if(xstatus != test->expected_exit_status) {
++        printf("FAILED with status %d, expected %d\n", xstatus, test->expected_exit_status);
++        return 0;
++      }
++    }
++  }
++  test_name = 0;
++  expected_xstatus = 0;
++  printf("OK\n");
++  return 1;
++}
++
++#define error_exit(msg) error_exit_core((msg), -1)
++void error_exit_core(char *msg, int xstatus) {
++  print_test_error(test_name, msg);
++  exit(xstatus);
++}
++
++void run_forever() {
++  int i = 0;
++  while (1) {
++    i++;
++  }
++}
++void run_for_core(int ticks) {
++  int t0 = uptime();
++  int i = 0;
++  while (uptime() - t0 <= ticks) {
++    i++;
++  }
++}
++void run_for(int ticks) {
++  if (ticks >= 0) {
++    run_for_core(ticks);
++  }
++  else {
++    run_forever();
++  }
++}
++
++void thread_func_run_forever() {
++  int my_tid = kthread_id();
++  print("thread %d started", my_tid);
++  run_forever();
++}
++void thread_func_run_for_5_xstatus_74() {
++  int my_tid = kthread_id();
++  print("thread %d started", my_tid);
++  run_for(5);
++  print("thread %d exiting", my_tid);
++  kthread_exit(74);
++}
++
++int shared = 0;
++void thread_func_sleep_for_1_xstatus_7() {
++    int my_tid = kthread_id();
++    print("thread %d started", my_tid);
++    sleep(1);
++    print("thread %d woke up", my_tid);
++    shared++;
++    kthread_exit(7);
++}
++
++void thread_func_exit_sleep_1_xstatus_98() {
++  sleep(1);
++  exit(98);
++}
++
++void thread_func_exec_sleep_1_xstatus_98() {
++  sleep(1);
++  exec(exec_argv[0], exec_argv);
++  printf("exec failed, exiting\n");
++  exit(-80);
++}
++
++void create_thread_exit_simple_other_thread_func() {
++  print("hello from other thread");
++  kthread_exit(6);
++}
++void create_thread_exit_simple(char *s) {
++  printf("strat first test\n");
++  void *stack = malloc(MAX_STACK_SIZE);
++  if (kthread_create(create_thread_exit_simple_other_thread_func, stack) < 0) {
++    error_exit_core("failed to create a thread", -2);
++  }
++
++  print("hello from main thread");
++  kthread_exit(-3);
++}
++
++void kthread_create_simple_func(void) {
++  char c;
++  print("pipes other thread: %d, %d", pipe_fds[0], pipe_fds[1]);
++  if (read(pipe_fds[0], &c, 1) != 1) {
++    error_exit_core("pipe read - other thread failed", -2);
++  }
++
++  print("hello from other thread");
++
++  if (write(pipe_fds_2[1], "x", 1) < 0) {
++    error_exit_core("pipe write - other thread failed", -3);
++  }
++
++  print("second thread exiting");
++  kthread_exit(0);
++}
++void kthread_create_simple(char *s) {
++  void *other_thread_user_stack_pointer;
++  char c;
++  if (pipe(pipe_fds) < 0) {
++    error_exit_core("pipe failed", -4);
++  }
++  if (pipe(pipe_fds_2) < 0) {
++    error_exit_core("pipe 2 failed", -5);
++  }
++  print("pipes main thread: %d, %d", pipe_fds[0], pipe_fds[1]);
++  if ((other_thread_user_stack_pointer = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit_core("failed to allocate user stack", -6);
++  }
++  if (kthread_create(kthread_create_simple_func, other_thread_user_stack_pointer) < 0) {
++    error_exit_core("creating thread failed", -8);
++  }
++
++  if (write(pipe_fds[1], "x", 1) < 0) {
++    error_exit_core("pipe write - main thread failed", -9);
++  }
++  
++  print("main thread after write");
++  if (read(pipe_fds_2[0], &c, 1) != 1) {
++    error_exit_core("pipe read - main thread failed", -10);
++  }
++  
++  kthread_exit(1);
++}
++
++void join_simple(char *s) {
++  int other_tid;
++  int xstatus;
++  void *stack = malloc(MAX_STACK_SIZE);
++  other_tid = kthread_create(thread_func_run_for_5_xstatus_74, stack);
++  if (other_tid < 0) {
++    error_exit_core("kthread_create failed", -2);
++  }
++
++  print("created thread %d", other_tid);
++  if (kthread_join(other_tid, &xstatus) < 0) {
++    error_exit_core("join failed", -3);
++  }
++
++  free(stack);
++  print("joined with thread %d, xstatus: %d", other_tid, xstatus);
++  kthread_exit(-3);
++}
++
++void join_self(char *s) {
++  int xstatus;
++  int other_tid;
++  void *stack = malloc(MAX_STACK_SIZE);
++  int my_tid = kthread_id();
++  print("thread %d started", my_tid);
++  other_tid = kthread_create(thread_func_run_for_5_xstatus_74, stack);
++  if (other_tid < 0) {
++    error_exit_core("kthread_create failed", -2);
++  }
++  print("created thread %d", other_tid);
++  if (kthread_join(other_tid, &xstatus) < 0) {
++    error_exit_core("join failed", -3);
++  }
++  if (kthread_join(my_tid, &xstatus) == 0) {
++    error_exit_core("join with self succeeded", -4);
++  }
++  
++  free(stack);
++  kthread_exit(-7);
++}
++
++void exit_multiple_threads(char *s) {
++  printf("exit multipleeeee\n");
++  int other_tid;
++  
++  void *stack, *stack2;
++  int my_tid = kthread_id();
++  print("thread %d started", my_tid);
++
++  stack = malloc(MAX_STACK_SIZE);
++  other_tid = kthread_create(thread_func_run_forever, stack);
++  if (other_tid < 0) {
++    error_exit("kthread_create failed");
++  }
++  print("created thread %d", other_tid);
++  stack2 = malloc(MAX_STACK_SIZE);
++  other_tid = kthread_create(thread_func_run_forever, stack2);
++  if (other_tid < 0) {
++    error_exit("kthread_create failed");
++  }
++  printf("created thread %d", other_tid);
++  sleep(2);
++  printf("exiting...");
++  exit(9);
++}
++
++void max_threads_exit(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_run_forever, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("exiting...");
++  exit(8);
++}
++
++void max_threads_exit_they_exit_after_1(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_sleep_for_1_xstatus_7, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("exiting...");
++  exit(8);
++}
++
++void max_threads_exit_by_created_they_run_forever(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    void (*f)();
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    if (i == 5) {
++      f = thread_func_exit_sleep_1_xstatus_98;
++    }
++    else {
++      f = run_forever;
++    }
++    tids[i] = kthread_create(f, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(last_stack);
++  
++  run_forever();
++  kthread_exit(8);
++}
++
++void max_threads_exit_by_created_they_exit_after_1(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    void (*f)();
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    if (i == 5) {
++      f = thread_func_exit_sleep_1_xstatus_98;
++    }
++    else {
++      f = thread_func_sleep_for_1_xstatus_7;
++    }
++    tids[i] = kthread_create(f, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(last_stack);
++  
++  sleep(1);
++  kthread_exit(8);
++}
++
++void max_threads_join(char *s) {
++  int tids[NTHREAD - 1];
++  void *stacks[NTHREAD - 1];
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_sleep_for_1_xstatus_7, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++  void *stack;
++  if ((stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(stack);
++
++  print("joining the rest...");
++  for (int i = 0; i < NTHREAD - 1; i++) {
++      int status;
++      if (kthread_join(tids[i], &status) < 0) {
++        error_exit("join failed");
++      }
++      free(stacks[i]);
++      print("status for %d: %d", tids[i], status);
++  }
++  print("shared: %d", shared);
++  exit(0);
++}
++
++void max_threads_join_reverse(char *s) {
++  int tids[NTHREAD - 1];
++  void *stacks[NTHREAD - 1];
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_sleep_for_1_xstatus_7, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++  void *stack;
++  if ((stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(stack);
++
++  print("joining the rest...");
++  for (int i = NTHREAD - 2; i >= 0; i--) {
++      int status;
++      if (kthread_join(tids[i], &status) < 0) {
++        error_exit("join failed");
++      }
++      free(stacks[i]);
++      print("status for %d: %d", tids[i], status);
++  }
++  print("shared: %d", shared);
++  exit(0);
++}
++
++void exec_test_simple_func() {
++  print("print after successful exec");
++  test_name = "exec simple thread create";
++  create_thread_exit_simple(test_name);
++  exit(96);
++}
++
++void exec_test_func() {
++  print("print after successful exec");
++  test_name = "exec max threads join";
++  max_threads_join(test_name);
++  exit(96);
++}
++
++void max_threads_exec_simple(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_run_forever, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("exec...");
++  exec(exec_simple_argv[0], exec_simple_argv);
++  printf("exec failed, exiting\n");
++  exit(-80);
++}
++
++void max_threads_exec(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_run_forever, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("exec...");
++  exec(exec_argv[0], exec_argv);
++  printf("exec failed, exiting\n");
++  exit(-80);
++}
++
++void max_threads_exec_they_exit_after_1(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_sleep_for_1_xstatus_7, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("exec...");
++  exec(exec_argv[0], exec_argv);
++  printf("exec failed, exiting\n");
++  exit(-80);
++}
++
++void max_threads_exec_by_created_they_run_forever(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    void (*f)();
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    if (i == 5) {
++      f = thread_func_exec_sleep_1_xstatus_98;
++    }
++    else {
++      f = run_forever;
++    }
++    tids[i] = kthread_create(f, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(last_stack);
++  
++  run_forever();
++  kthread_exit(8);
++}
++
++void max_threads_exec_by_created_they_exit_after_1(char *s) {
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    void (*f)();
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    if (i == 5) {
++      f = thread_func_exec_sleep_1_xstatus_98;
++    }
++    else {
++      f = thread_func_sleep_for_1_xstatus_7;
++    }
++    tids[i] = kthread_create(f, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_sleep_for_1_xstatus_7, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  free(last_stack);
++  
++  sleep(1);
++  kthread_exit(8);
++}
++
++void max_threads_fork(char *s) {
++  int child_xstatus;
++  int child_pid;
++  void *stacks[NTHREAD - 1];
++  int tids[NTHREAD - 1];
++  void *last_stack;
++  int my_tid = kthread_id();
++
++  print("thread %d started", my_tid);
++  for (int i = 0; i < NTHREAD - 1; i++) {
++    stacks[i] = malloc(MAX_STACK_SIZE);
++    if (stacks[i] < 0) {
++      error_exit("malloc failed");
++    }
++    tids[i] = kthread_create(thread_func_run_forever, stacks[i]);
++    if (tids[i] < 0) {
++      error_exit("kthread_create failed");
++    }
++
++    print("created thread %d", tids[i]);
++  }
++
++  if ((last_stack = malloc(MAX_STACK_SIZE)) < 0) {
++    error_exit("last malloc failed");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads");
++  }
++  if (kthread_create(thread_func_run_forever, last_stack) >= 0) {
++    error_exit("created too many threads 2");
++  }
++  free(last_stack);
++  
++  print("going to sleep");
++  sleep(5);
++  print("forking...");
++  child_pid = fork();
++  if (child_pid < 0) {
++    error_exit("fork failed");
++  }
++  else if (child_pid == 0) {
++    test_name = "fork max threads join";
++    max_threads_join(test_name);
++    exit(9);
++  }
++
++  print("waiting...");
++  if (wait(&child_xstatus) < 0) {
++    error_exit("wait failed");
++  }
++
++  exit(8);
++}
++
++struct test tests[] = {
++  {
++    .f = create_thread_exit_simple,
++    .name = "create_thread_exit_simple",
++    .expected_exit_status = 6,
++    .repeat_count = 1,
++  },
++  {
++    .f = kthread_create_simple,
++    .name = "kthread_create_simple",
++    .expected_exit_status = 1,
++    .repeat_count = 1,
++  },
++  {
++    .f = join_simple,
++    .name = "join_simple",
++    .expected_exit_status = -3,
++    .repeat_count = 1,
++  },
++  {
++    .f = join_self,
++    .name = "join_self",
++    .expected_exit_status = -7,
++    .repeat_count = 1,
++  },
++  {
++    .f = exit_multiple_threads,
++    .name = "exit_multiple_threads",
++    .expected_exit_status = 9,
++    .repeat_count = 3,
++  },
++  {
++    .f = max_threads_exit,
++    .name = "max_threads_exit",
++    .expected_exit_status = 8,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_exit_they_exit_after_1,
++    .name = "max_threads_exit_they_exit_after_1",
++    .expected_exit_status = 8,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_exit_by_created_they_exit_after_1,
++    .name = "max_threads_exit_by_created_they_exit_after_1",
++    .expected_exit_status = 98,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_exit_by_created_they_run_forever,
++    .name = "max_threads_exit_by_created_they_run_forever",
++    .expected_exit_status = 98,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_join,
++    .name = "max_threads_join",
++    .expected_exit_status = 0,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_join_reverse,
++    .name = "max_threads_join_reverse",
++    .expected_exit_status = 0,
++    .repeat_count = 10,
++  },
++  {
++    .f = max_threads_exec_simple,
++    .name = "max_threads_exec_simple",
++    .expected_exit_status = 6,
++    .repeat_count = 1
++  },
++  {
++    .f = max_threads_exec,
++    .name = "max_threads_exec",
++    .expected_exit_status = 0,
++    .repeat_count = 10
++  },
++  {
++    .f = max_threads_exec_they_exit_after_1,
++    .name = "max_threads_exec_they_exit_after_1",
++    .expected_exit_status = 0,
++    .repeat_count = 10
++  },
++  {
++    .f = max_threads_exec_by_created_they_run_forever,
++    .name = "max_threads_exec_by_created_they_run_forever",
++    .expected_exit_status = 0,
++    .repeat_count = 10
++  },
++  {
++    .f = max_threads_exec_by_created_they_exit_after_1,
++    .name = "max_threads_exec_by_created_they_exit_after_1",
++    .expected_exit_status = 0,
++    .repeat_count = 10
++  },
++  {
++    .f = max_threads_fork,
++    .name = "max_threads_fork",
++    .expected_exit_status = 8,
++    .repeat_count = 3
++  },
++};
++
++struct test *find_test_by_name(char *name) {
++  for (struct test *test = tests; test < &tests[sizeof(tests) / sizeof(tests[0])]; test++) {
++    if (strcmp(test->name, name) == 0) {
++      return test;
++    }
++  }
++  return 0;
++}
++
++void main(int argc, char *argv[]) {
++  int success = 1;
++  exec_argv[0] = argv[0];
++  exec_simple_argv[0] = argv[0];
++  if (argc == 1) {
++    // run all
++    for (struct test *test = tests; test < &tests[sizeof(tests) / sizeof(tests[0])]; test++) {
++      if (!run(test)) {
++        success = 0;
++      }
++    }
++  }
++  else if (argc == 2 && strcmp(argv[1], exec_simple_argv[1]) == 0) {
++    exec_test_simple_func();
++  }
++  else if (argc == 2 && strcmp(argv[1], exec_argv[1]) == 0) {
++    exec_test_func();
++  }
++  else {
++    // run tests specified by argv
++    for (int i = 1; i < argc; i++) {
++      struct test *test = find_test_by_name(argv[i]);
++      if (!test) {
++        printf("ERR: could not find test with name %s\n", argv[i]);
++        continue;
++      }
++      if (!run(test)) {
++        success = 0;
++      }
++    }
++  }
++
++  if (success) {
++    printf("ALL TESTS PASSED\n");
++    exit(0);
++  }
++  else {
++    printf("SOME TESTS FAILED\n");
++    exit(1);
++  }
++}
+\ No newline at end of file
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..894c20b 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -36,3 +36,18 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("sigprocmask");
++entry("sigaction");
++entry("sigret");
++entry("kthread_create");
++entry("kthread_id");
++entry("kthread_exit");
++entry("kthread_join");
++entry("bsem_alloc");
++entry("bsem_free");
++entry("bsem_down");
++entry("bsem_up");
++
++
++
++
